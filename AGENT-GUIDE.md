@@ -1,0 +1,129 @@
+# StickHub - AGENT-GUIDE (read fully before coding)
+
+Working name: StickHub (rename freely). Owner: Fabian. Greenfield project. Ignore any older projects.
+
+## Goal
+A personal hub for my Node.js apps and games that lives on a USB stick.
+Plug the stick into my phone and within seconds the hub opens full-screen (installed PWA). One tap starts any app.
+The stick is the carrier and a backup. Git (this repo) is the master for code. The phone works from its git clone and syncs data with the stick.
+Every app can use a different engine (node server, static files, more later).
+Phone first. A Windows launcher comes later: design for it, do not build it yet.
+
+## How I work
+- The agent commits and pushes to my PUBLIC GitHub repo. I `git pull` on my phone (Termux) and test there. No update scripts.
+- The agent cannot run Termux or touch the stick. Everything Termux- or stick-specific sits behind small adapter
+  modules (`platform/termux.mjs`, `stick.mjs`) with fakes, so the rest is testable with `node --test` anywhere. Target Node 24.
+- Anything that must be tested on the phone goes in `probes/`. Every message that needs a phone test ends with ONE command
+  to paste in Termux, like `cd ~/StickHub && git pull && sh probes/run-all.sh`. The script copies its output to the
+  clipboard (`termux-clipboard-set`). I paste the result back.
+
+## Hard rules
+- Zero dependencies: Node.js built-ins only. No npm packages, no build step, no native addons, no CDN. Vanilla HTML/CSS/JS in the browser.
+- Node 24 (v24.22.1 on the phone). ESM (.mjs) everywhere. No package.json needed.
+- Works fully offline.
+- Tests with node:test (`node --test`). They must pass on the phone.
+- Small files (about 400 lines max), clear modules, JSDoc on public functions, explicit error handling, no silent catches.
+- Never `shell: true`, never eval. Spawn with argument arrays. Every external command call has a timeout.
+- Secrets (the access token) live outside the synced tree (~/.stickhub/) and never go on the stick.
+- The repo is PUBLIC. Never commit secrets, tokens, saves, logs, device IDs, volume UUIDs or personal data.
+  `.gitignore` covers data/, .trash/, logs/, sync-state.json, stick.json, *.part, *.tmp, .stickhub/.
+
+## Target environment (measured, do not guess)
+- Phone: OPPO A6 Pro 5G (CPH2781), Android 16 / ColorOS 16. Dimensity 6300: 2 fast + 6 slow cores, 8 GB RAM, weak GPU.
+- Screen 1080x2372, about 423x930 CSS px, DPR 2.55, 120 Hz.
+- Runs in Termux (F-Droid build 0.119.0-beta.3), aarch64, no root. Home: /data/data/com.termux/files/home. Ports 1024+ only.
+- Termux tools available: termux-usb, termux-open-url, termux-notification, termux-toast, termux-clipboard-set, termux-wake-lock, termux-setup-storage (Termux:API is installed).
+- Two fast cores: keep CPU light. Few timers, no busy loops, no recursive fs.watch. ColorOS may freeze background apps.
+
+## The stick (measured)
+- 64 GB exFAT (57 GB free), mounted at /storage/<volume-uuid> (FUSE). Termux can read AND write there after `termux-setup-storage`.
+- /storage itself is NOT listable (permission denied) but /storage/<UUID>/... works. Candidate roots: `readlink ~/storage/external-*`.
+  Never hardcode the UUID (it is detected at runtime): find the stick by the marker file HUB/stick.json.
+- The mount is noexec (nothing on the stick runs directly: always `node file.mjs`). The underlying mount has dirsync, so directory operations are slow: batch work, avoid thousands of tiny files.
+- exFAT: no symlinks, no permission bits, case-insensitive, forbidden characters <>:"/\|?*, unreliable mtimes. Never use mtime for sync: use size + sha256. App ids are [a-z0-9-] only.
+- The stick can be pulled at any moment. Every write to the stick: write name.part, fsync, rename. Keep a journal so an interrupted sync resumes or rolls back.
+
+## Verify first (do not build on these assumptions)
+Probes in `probes/`, all run by `sh probes/run-all.sh` (result goes to the clipboard):
+1. Does re-running `termux-setup-storage` after re-plugging the stick refresh the ~/storage/external-* links?
+2. Can `termux-open-url` open Chrome from a background process? (Needs "Display over other apps" for Termux, maybe a ColorOS background pop-up permission.)
+3. Cost of polling `termux-usb -l` every 3 s (time per call, battery). Poll slower if it is heavy.
+4. Write/rename/fsync speed on the stick for 1 big file and for 500 small files.
+5. Does fsync + rename behave sanely on this FUSE exFAT mount?
+
+## Repo, phone and stick layout
+~~~
+StickHub/             the git repo = master for code
+  hub/                core code (server, engines, ui, watcher, cli, platform adapters)
+  apps/<id>/          one folder per app (app.json + files); apps live in this repo for now
+  probes/             phone-only measurements
+  test/               node:test suites
+~~~
+- Phone: the git clone (for example ~/StickHub, never on the stick) is the working copy. Phone-only, git-ignored:
+  data/<id>/, logs/, sync-state.json, .trash/.
+- Stick:
+~~~
+HUB/                  on the stick
+  stick.json          marker + identity {id, name, created} + commit (git hash of the code snapshot)
+  hub/  apps/         snapshot of the tracked files at that commit (no .git)
+  data/<id>/          saves and user data per app (never overwritten by code sync)
+  runtime/            optional portable Node for Windows (later)
+  .trash/<date>/      deleted files go here, never hard-deleted
+~~~
+Two run modes: (1) phone mode (default, fast): run from the clone. (2) portable mode: run straight from the stick, for a PC or another device.
+The hub also works with no stick plugged in. A setting `requireStick` makes it refuse to start without the stick (cartridge feel).
+
+## App manifest (apps/<id>/app.json)
+~~~json
+{ "id": "deep-dig", "name": "Deep Dig", "icon": "icon.png", "engine": "node-server",
+  "entry": "server.js", "port": "auto", "args": [], "env": {}, "version": "0.1.0" }
+~~~
+- Relative paths only, no "..". Validate strictly. One broken app must never break the hub: show the error on its tile.
+- The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
+
+## Engines (hub/engines/<id>.mjs)
+Contract: `export default { id, validate(manifest), async start(ctx) -> { port, url, stop() } }`.
+v1: `node-server` (spawn process.execPath with entry, wait until the port accepts TCP, health check) and `static` (built-in static server: correct MIME, Range requests, no path traversal, optional SPA fallback).
+Adding an engine = adding one file. Leave room for cli, custom command and game-specific engines.
+
+## Hub core
+- Hub port is fixed: 127.0.0.1:8787 (fixed so the PWA origin stays stable; fail loudly if taken). App ports 4100-4199.
+- One server for UI + API (JSON + SSE): list apps, start/stop/restart, status, live logs, stick + sync status. No framework.
+- Process manager: spawn, track, graceful stop (SIGTERM, then SIGKILL), no zombies, ring-buffer logs, clean up on hub exit.
+- Security (a web page in my browser can try to call 127.0.0.1): check Host and Origin, require a random per-install token on every state-changing call (cookie HttpOnly + SameSite=Strict, set from the first URL the watcher opens), launch only apps from validated manifests, never run commands taken from API input.
+
+## UI (vanilla, mobile-first, installable PWA)
+- Dark, AMOLED black. Big tile grid: icon, name, status dot. Tap = start (if needed) and open. Long-press = menu (stop, restart, logs).
+- Status chip: stick connected / syncing / conflicts / stick has a different commit. Short "Stick connected" animation on plug-in.
+- Safe-area insets, no hover-only features, CSS animations only, no heavy WebGL.
+- PWA: manifest (standalone, maskable icons 192/512), service worker caching the shell, friendly offline page ("Hub is not running") when the server is down.
+
+## Sync
+Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
+- Code (hub/, apps/): git is the master. Phone -> stick copies a snapshot of the tracked files (`git ls-files`, no .git)
+  and writes the commit hash into stick.json. If the stick has a different commit than the phone, show it in the UI.
+  Stick -> phone code copy is an explicit command only. The watcher never pulls from GitHub by itself
+  (setting `autoPull`, default false).
+- Data (data/): two-way, three-way by hash. sync-state.json keeps the last synced hash per file. Only one side changed:
+  copy it. Both changed: keep both (name.conflict-<time>) and show it in the UI. Deletions go to .trash.
+- Verify every copy by hash. Limit parallelism (FUSE is slow). Show progress. Ignore .git, *.part, *.tmp, node_modules.
+- Lock file on the stick (HUB/.lock: device id + time) with stale-lock detection.
+
+## Watcher (phone only, hub/watcher.mjs, runs in Termux)
+- Poll `termux-usb -l`. On a new device: wait up to ~15 s for the mount, run `termux-setup-storage`, read the links, look for HUB/stick.json.
+- Found: start the hub if it is not running, sync data, open `termux-open-url http://127.0.0.1:8787/?t=<token>`.
+  Stick removed: stop writing, finish or roll back the journal, update status.
+- Run under `termux-wake-lock`. CLI: `hub watch start|stop|status`.
+- If opening Chrome from the background fails, show a termux-notification with a tap action instead.
+
+## Build order (stop after each phase and report)
+1. Core + engines (node-server, static) + UI + 2 sample apps. Done when `node hub/server.mjs` shows the grid, start/stop works and ports are freed.
+2. Stick layout + sync CLI (plan, run, conflicts, trash, unplug-safe). Test with a simulated interrupted copy.
+3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
+4. Windows launcher + portable Node (design only until I ask).
+
+## Delivery
+- Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
+- Tag the end of each phase (`phase-1-done`, `phase-2-done`, ...).
+- After each push: the exact commands to run on the phone and the expected output.
+- Short explanations, simple English.
