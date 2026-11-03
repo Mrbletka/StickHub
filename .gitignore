@@ -1,0 +1,11 @@
+# Phone and stick state: never in the public repo
+data/
+.trash/
+logs/
+sync-state.json
+stick.json
+*.part
+*.tmp
+.stickhub/
+node_modules/
+probes/out/
