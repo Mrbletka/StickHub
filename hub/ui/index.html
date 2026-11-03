@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="color-scheme" content="dark">
+<title>StickHub</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="bar">
+  <h1>StickHub</h1>
+  <span id="chip" class="chip" role="status">Connecting…</span>
+</header>
+
+<main>
+  <div id="grid" class="grid" aria-live="polite"></div>
+  <p id="empty" class="empty" hidden>No apps yet. Add a folder with an <code>app.json</code> to <code>apps/</code>.</p>
+</main>
+
+<dialog id="menu" class="sheet">
+  <div class="sheet-head">
+    <div id="menu-icon" class="icon small"></div>
+    <div>
+      <h2 id="menu-name"></h2>
+      <p id="menu-status" class="muted"></p>
+    </div>
+  </div>
+  <p id="menu-error" class="error" hidden></p>
+  <div class="actions">
+    <button data-act="open" class="primary">Open</button>
+    <button data-act="restart">Restart</button>
+    <button data-act="stop">Stop</button>
+    <button data-act="logs">Logs</button>
+  </div>
+  <button data-act="close" class="ghost">Close</button>
+</dialog>
+
+<dialog id="logs" class="sheet tall">
+  <div class="sheet-head">
+    <h2 id="logs-name">Logs</h2>
+    <button data-act="close" class="ghost">Close</button>
+  </div>
+  <pre id="logs-text" class="log"></pre>
+</dialog>
+
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

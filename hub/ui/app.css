@@ -1,0 +1,109 @@
+/* StickHub UI: AMOLED black, big tiles, phone first. No hover-only features. */
+:root {
+  --bg: #000;
+  --tile: #101010;
+  --tile-press: #1c1c1c;
+  --line: #262626;
+  --text: #f2f2f2;
+  --muted: #8a8a8a;
+  --accent: #5df2a0;
+  --warn: #ffc247;
+  --bad: #ff5f56;
+  --radius: 20px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100dvh;
+  padding: calc(var(--safe-top) + 8px) calc(var(--safe-right) + 16px) calc(var(--safe-bottom) + 24px) calc(var(--safe-left) + 16px);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: contain;
+}
+button { font: inherit; color: inherit; }
+code { font-family: ui-monospace, monospace; color: var(--warn); }
+
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0 16px; }
+.bar h1 { margin: 0; font-size: 22px; letter-spacing: .02em; }
+.chip {
+  font-size: 13px; padding: 6px 12px; border-radius: 999px; background: #121212; border: 1px solid var(--line);
+  color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%;
+}
+.chip.ok { color: var(--accent); }
+.chip.bad { color: var(--bad); border-color: #4a1d1b; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
+@media (max-width: 340px) { .grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
+
+.tile {
+  all: unset; position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 20px 12px 16px; background: var(--tile); border-radius: var(--radius); border: 1px solid var(--line);
+  text-align: center; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  -webkit-touch-callout: none; transition: transform .12s ease, background .12s ease;
+}
+.tile:active, .tile.pressed { transform: scale(.96); background: var(--tile-press); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile .name { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.tile .sub { font-size: 12px; color: var(--muted); min-height: 1.4em; }
+.tile.broken .sub { color: var(--bad); }
+
+.icon {
+  width: 72px; height: 72px; border-radius: 18px; background: #1a1a1a; display: grid; place-items: center;
+  font-size: 32px; font-weight: 700; color: var(--muted); overflow: hidden; flex: none;
+}
+.icon img { width: 100%; height: 100%; object-fit: cover; }
+.icon.small { width: 48px; height: 48px; border-radius: 12px; font-size: 22px; }
+
+.dot { position: absolute; top: 12px; right: 12px; width: 12px; height: 12px; border-radius: 50%; background: #3a3a3a; }
+.dot.running { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+.dot.starting, .dot.stopping { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+.dot.error { background: var(--bad); }
+@keyframes pulse { 50% { opacity: .3; } }
+
+.empty { color: var(--muted); text-align: center; margin-top: 15vh; padding: 0 16px; }
+
+/* Bottom sheets (native <dialog>: the Android back gesture closes them). */
+.sheet {
+  width: 100%; max-width: 520px; margin: auto auto 0; padding: 20px 20px calc(var(--safe-bottom) + 16px);
+  background: #0d0d0d; color: var(--text); border: 1px solid var(--line); border-bottom: 0;
+  border-radius: 24px 24px 0 0; max-height: 85dvh;
+}
+.sheet[open] { animation: up .18s ease-out; }
+.sheet::backdrop { background: rgba(0, 0, 0, .7); }
+@keyframes up { from { transform: translateY(40px); opacity: 0; } }
+.sheet.tall { height: 85dvh; }
+.sheet.tall[open] { display: flex; flex-direction: column; }
+.sheet-head { display: flex; align-items: center; gap: 14px; justify-content: space-between; }
+.sheet-head > div:last-child { flex: 1; min-width: 0; }
+.sheet h2 { margin: 0; font-size: 19px; }
+.muted { color: var(--muted); margin: 2px 0 0; font-size: 14px; }
+.error { color: var(--bad); background: #1d0b0a; padding: 10px 12px; border-radius: 12px; font-size: 14px; overflow-wrap: anywhere; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 18px 0 10px; }
+.actions button, .ghost {
+  min-height: 52px; border-radius: 14px; border: 1px solid var(--line); background: #171717; font-size: 16px; cursor: pointer;
+}
+.actions button:active, .ghost:active { background: #262626; }
+.actions button:disabled { opacity: .35; }
+.actions .primary { background: var(--accent); color: #002814; border: 0; font-weight: 700; }
+.ghost { width: 100%; background: transparent; }
+.sheet-head .ghost { width: auto; padding: 0 18px; min-height: 44px; }
+
+.log {
+  flex: 1; margin: 14px 0 0; padding: 12px; overflow: auto; background: #050505; border: 1px solid var(--line);
+  border-radius: 12px; font: 12px/1.45 ui-monospace, "Cascadia Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.log .err { color: #ff8a80; }
+.log .sys { color: var(--warn); }
+
+.toast {
+  position: fixed; left: 16px; right: 16px; bottom: calc(var(--safe-bottom) + 16px); margin: 0 auto; max-width: 480px;
+  padding: 14px 16px; border-radius: 14px; background: #2a0f0d; color: #ffd9d6; border: 1px solid #4a1d1b;
+  font-size: 15px; animation: up .18s ease-out; z-index: 10;
+}
+
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
