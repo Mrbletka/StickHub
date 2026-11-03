@@ -1,60 +1,98 @@
-// Probe 1: what happens on unplug and re-plug, and does `termux-setup-storage` refresh the ~/storage links?
-// Records a timeline: when the USB device shows up, when the volume is mounted, when the links work again.
+// Probe 1: what happens on unplug and re-plug?
+// Timeline (ms after the prompt): USB device gone/back (termux-usb), volume unmounted/mounted (/proc/self/mountinfo),
+// stick root readable and writable again, old ~/storage link working again. Then: does termux-setup-storage help?
+// Fast checks (mountinfo, stat) run every 250 ms; the slow termux-usb call runs in its own loop.
 
-import { run, hasCmd, ask, waitFor, sleep, storageLinks, linksKey, volumeMounts } from './lib.mjs';
+import { readdirSync } from 'node:fs';
+import { run, hasCmd, ask, sleep, canWrite, storageLinks, linksKey, volumeMounts, volumeRoot } from './lib.mjs';
 
-/** Snapshot of everything we can see about the stick, without spawning anything except termux-usb. */
-async function snapshot() {
-  const usb = hasCmd('termux-usb') ? await run('termux-usb', ['-l'], { timeout: 10_000 }) : null;
+/** Mount points of removable volumes under /storage, as one string. */
+function storageMounts() {
   const vm = volumeMounts();
-  return {
-    usb: usb ? (usb.ok ? usb.stdout.trim().replace(/\s+/g, ' ') : `error ${usb.error}`) : 'no termux-usb',
-    mounts: vm.error ? `unreadable ${vm.error}` : vm.mounts.map((m) => m.mountPoint).join(' ') || 'none',
-    links: linksKey(),
-  };
+  if (vm.error) return `unreadable ${vm.error}`;
+  return vm.mounts.map((m) => m.mountPoint).filter((p) => volumeRoot(p)).join(' ') || 'none';
+}
+
+/** One USB listing as a short string. */
+async function usbList() {
+  const res = await run('termux-usb', ['-l'], { timeout: 10_000 });
+  return res.ok ? res.stdout.replace(/\s+/g, '') : `error ${res.error}`;
+}
+
+/**
+ * Watch until every named event has fired or limitMs passes.
+ * @param {Record<string, () => boolean>} fast  cheap checks, run every 250 ms
+ * @param {((usb: string) => boolean)|null} usbDone  check on each termux-usb result (slow loop)
+ * @returns {Promise<Record<string, number|null>>} ms when each event first fired, null if never
+ */
+async function timeline(fast, usbDone, limitMs) {
+  const t0 = performance.now();
+  const seen = Object.fromEntries([...Object.keys(fast), ...(usbDone ? ['usb'] : [])].map((k) => [k, null]));
+  const done = () => Object.values(seen).every((v) => v !== null) || performance.now() - t0 > limitMs;
+  const fastLoop = (async () => {
+    while (!done()) {
+      for (const [k, check] of Object.entries(fast)) if (seen[k] === null && check()) seen[k] = Math.round(performance.now() - t0);
+      await sleep(250);
+    }
+  })();
+  const usbLoop = (async () => {
+    while (usbDone && !done()) {
+      if (usbDone(await usbList()) && seen.usb === null) seen.usb = Math.round(performance.now() - t0);
+    }
+  })();
+  await Promise.all([fastLoop, usbLoop]);
+  return seen;
 }
 
 /** @param {import('./lib.mjs').Report} r */
 export async function run1(r) {
   r.section('1. Unplug and re-plug');
   if (!process.stdin.isTTY) { r.add('skipped', 'needs you at the phone (no terminal)'); return; }
-  if ((await ask('Probe 1 needs you to unplug and re-plug the stick. Enter = start, s = skip:')) === 's') {
+  if ((await ask('Probe 1: you will unplug and re-plug the stick. Keep it plugged in now. Enter = start, s = skip:')) === 's') {
     r.add('skipped', 'by you');
     return;
   }
-  const plugged = await snapshot();
-  r.add('plugged', plugged);
+  const hasUsb = hasCmd('termux-usb');
+  const mountsIn = storageMounts();
+  const root = mountsIn.split(' ').find((p) => volumeRoot(p)) || null;
+  const usbIn = hasUsb ? await usbList() : 'no termux-usb';
+  r.add('plugged', { usb: usbIn, mounts: mountsIn, root, links: linksKey() });
+  if (!root) { r.add('stopped', 'no stick mounted under /storage. Plug it in and run the probe again.'); return; }
+  const stickLink = storageLinks().find((l) => volumeRoot(l.target) === root);
 
-  await ask('UNPLUG the stick now. Wait 5 s, then press Enter.');
-  const out = await snapshot();
-  r.add('unplugged', out);
+  console.log('\n>>> UNPLUG the stick now. (Waiting up to 60 s.)');
+  const out = await timeline({
+    unmounted: () => !storageMounts().includes(root),
+    rootGone: () => { try { readdirSync(root); return false; } catch { return true; } },
+  }, hasUsb ? (u) => u !== usbIn : null, 60_000);
+  r.add('unplug timeline (ms)', out);
+  r.add('after unplug', { usb: hasUsb ? await usbList() : '-', mounts: storageMounts(), links: linksKey() });
+  if (out.unmounted === null) { r.add('stopped', 'the stick did not unmount within 60 s'); return; }
 
-  await ask('Press Enter, then PLUG the stick back in right away.');
-  const t0 = performance.now();
-  const seen = { usb: null, mounts: null, links: null };
-  await waitFor(async () => {
-    const s = await snapshot();
-    const t = Math.round(performance.now() - t0);
-    for (const k of Object.keys(seen)) if (seen[k] === null && s[k] !== out[k]) seen[k] = { ms: t, now: s[k] };
-    return seen.usb && seen.mounts && seen.links;
-  }, 40_000, 1000);
-  r.add('after plug-in, first change seen (ms from Enter)', seen);
+  await sleep(2000);
+  console.log('\n>>> PLUG the stick back in now. (Waiting up to 60 s.)');
+  const back = await timeline({
+    mounted: () => storageMounts().includes(root),
+    rootReadable: () => { try { readdirSync(root); return true; } catch { return false; } },
+    rootWritable: () => canWrite(root) === 'yes',
+    oldLinkWorks: () => !stickLink || storageLinks().some((l) => l.name === stickLink.name && l.reachable),
+  }, hasUsb ? (u) => u === usbIn : null, 60_000);
+  r.add('re-plug timeline (ms)', back);
+  await sleep(1000);
+  r.add('after re-plug, no setup-storage', { mounts: storageMounts(), rootWritable: canWrite(root), links: linksKey() });
+
+  if (!hasCmd('termux-setup-storage')) return;
+  if ((await ask('Run termux-setup-storage now? It may show a pop-up. Enter = yes, s = skip:')) === 's') return;
   const before = linksKey();
-  r.add('links before setup-storage', before);
-  r.add('links work without setup-storage', storageLinks().every((l) => l.reachable) ? 'yes' : 'no');
-
-  if (!hasCmd('termux-setup-storage')) { r.add('termux-setup-storage', 'not found'); return; }
-  r.add('note', 'running termux-setup-storage (answers "y" to its question)');
   const t1 = performance.now();
   const res = await run('termux-setup-storage', [], { timeout: 20_000, input: 'y\n' });
-  r.add('termux-setup-storage', `${res.ok ? 'exit 0' : `failed: ${res.error}`} in ${Math.round(res.ms)} ms; said: ${(res.stdout + res.stderr).trim().replace(/\s+/g, ' ').slice(0, 300)}`);
-  // The links are rebuilt by the Termux app after the command returns, so watch for a change for a while.
-  const changed = await waitFor(() => (linksKey() !== before ? linksKey() : null), 15_000, 250);
-  r.add('links after setup-storage', changed.value
-    ? `changed after ${Math.round(performance.now() - t1)} ms: ${changed.value}`
-    : `no change within 15 s: ${linksKey()}`);
-  await sleep(2000); // the rebuild may still be in progress right after the first change
-  r.add('links 2 s later', linksKey());
-  r.add('all links work now', storageLinks().every((l) => l.reachable) ? 'yes' : 'no');
-  r.add('you saw', await ask('Did a dialog or screen pop up during setup-storage? (y/n)') || '(no answer)');
+  r.add('termux-setup-storage', `${res.ok ? 'exit 0' : `failed: ${res.error}`} in ${Math.round(res.ms)} ms`);
+  // The Termux app rebuilds the links after the command returns: wait for the stick's link, not just any change.
+  let ms = null;
+  while (performance.now() - t1 < 15_000) {
+    if (storageLinks().some((l) => volumeRoot(l.target) === root && l.reachable)) { ms = Math.round(performance.now() - t1); break; }
+    await sleep(250);
+  }
+  r.add('stick link after setup-storage', ms === null ? `not back within 15 s (before: ${before}; now: ${linksKey()})` : `back after ${ms} ms: ${linksKey()}`);
+  r.add('you saw', await ask('Did a dialog or screen pop up during setup-storage? (y = yes, n = no)') || '(no answer)');
 }

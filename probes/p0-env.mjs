@@ -1,21 +1,12 @@
 // Probe 0: environment facts and where the stick is. Picks the folders the other probes write to.
 
-import { mkdirSync, writeFileSync, rmSync, statfsSync } from 'node:fs';
+import { mkdirSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, cpus, totalmem, freemem } from 'node:os';
-import { hasCmd, storageLinks, volumeMounts, volumeRoot } from './lib.mjs';
+import { hasCmd, canWrite, storageLinks, volumeMounts, volumeRoot } from './lib.mjs';
 
 const TOOLS = ['termux-usb', 'termux-open-url', 'termux-notification', 'termux-notification-remove', 'termux-toast',
   'termux-clipboard-set', 'termux-wake-lock', 'termux-setup-storage', 'termux-battery-status'];
-
-/**
- * Try to create (and remove) a test file in dir.
- * @returns {string} 'yes' or the error code
- */
-function canWrite(dir) {
-  const f = join(dir, `.stickhub-probe-${process.pid}.tmp`);
-  try { writeFileSync(f, 'x'); rmSync(f); return 'yes'; } catch (e) { return e.code || e.message; }
-}
 
 /**
  * @param {import('./lib.mjs').Report} r
@@ -25,7 +16,7 @@ function canWrite(dir) {
 export async function run(r, opts, ctx) {
   r.section('0. Environment');
   r.add('node', process.version);
-  r.add('platform', `${process.platform} ${process.arch}, ${cpus().length} cpus`);
+  r.add('platform', `${process.platform} ${process.arch}, ${cpus().length} cpus seen by os.cpus()`);
   r.add('memory', `${Math.round(freemem() / 1048576)} MB free of ${Math.round(totalmem() / 1048576)} MB`);
   r.add('termux', process.env.TERMUX_VERSION || 'not detected');
   r.add('missing tools', TOOLS.filter((t) => !hasCmd(t)).join(', ') || 'none');

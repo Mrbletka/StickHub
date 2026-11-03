@@ -2,7 +2,7 @@
 // Probes measure the real phone; they never change anything outside their own temp folders.
 
 import { execFile } from 'node:child_process';
-import { readFileSync, readdirSync, readlinkSync, statSync, accessSync, constants } from 'node:fs';
+import { readFileSync, readdirSync, readlinkSync, statSync, accessSync, writeFileSync, rmSync, constants } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join, delimiter } from 'node:path';
 import { homedir } from 'node:os';
@@ -128,6 +128,16 @@ export function storageLinks() {
       return { name, target, reachable: false, error: e.code || e.message };
     }
   });
+}
+
+/**
+ * Try to create (and remove) a small test file in dir.
+ * @param {string} dir
+ * @returns {string} 'yes' or the error code
+ */
+export function canWrite(dir) {
+  const f = join(dir, `.stickhub-probe-${process.pid}.tmp`);
+  try { writeFileSync(f, 'x'); rmSync(f); return 'yes'; } catch (e) { return e.code || e.message; }
 }
 
 /** Short fingerprint of the links, to see when they change. */
