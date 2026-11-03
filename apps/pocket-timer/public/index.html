@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000">
+<title>Pocket Timer</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, sans-serif; }
+  body { display: grid; place-items: center; text-align: center; touch-action: manipulation; user-select: none; }
+  #t { font-size: clamp(56px, 20vw, 120px); font-variant-numeric: tabular-nums; color: #ffc247; margin-bottom: 32px; }
+  .row { display: flex; gap: 16px; justify-content: center; }
+  button { all: unset; min-width: 120px; padding: 18px 0; border-radius: 16px; background: #1a1a1a; font-size: 20px; text-align: center; }
+  button:active { background: #333; }
+  #go { background: #ffc247; color: #000; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <div id="t">0:00.0</div>
+  <div class="row"><button id="go">Start</button><button id="reset">Reset</button></div>
+</main>
+<script>
+  // Time comes from performance.now(), so pauses in drawing (screen off, tab hidden) never lose time.
+  const t = document.getElementById('t');
+  const go = document.getElementById('go');
+  let startedAt = 0, kept = 0, running = false;
+  const show = (ms) => {
+    const s = ms / 1000;
+    t.textContent = `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${Math.floor((ms % 1000) / 100)}`;
+  };
+  const tick = () => { if (!running) return; show(kept + performance.now() - startedAt); requestAnimationFrame(tick); };
+  go.onclick = () => {
+    if (running) { kept += performance.now() - startedAt; running = false; go.textContent = 'Start'; }
+    else { startedAt = performance.now(); running = true; go.textContent = 'Pause'; tick(); }
+  };
+  document.getElementById('reset').onclick = () => { kept = 0; startedAt = performance.now(); show(0); };
+</script>
+</body>
+</html>

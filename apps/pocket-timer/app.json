@@ -1,0 +1,9 @@
+{
+  "id": "pocket-timer",
+  "name": "Pocket Timer",
+  "description": "Sample static app. A stopwatch served by the hub's built-in static server.",
+  "icon": "icon.svg",
+  "engine": "static",
+  "entry": "public",
+  "version": "0.1.0"
+}
