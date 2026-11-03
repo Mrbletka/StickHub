@@ -82,7 +82,7 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
 - The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
 
 ## Engines (hub/engines/<id>.mjs)
-Contract: `export default { id, validate(manifest), async start(ctx) -> { port, url, stop() } }`.
+Contract: `export default { id, validate(manifest) -> string[] errors, async start(ctx) -> { port, url, stop(), exit?, pid? } }`.
 v1: `node-server` (spawn process.execPath with entry, wait until the port accepts TCP, health check) and `static` (built-in static server: correct MIME, Range requests, no path traversal, optional SPA fallback).
 Adding an engine = adding one file. Leave room for cli, custom command and game-specific engines.
 
