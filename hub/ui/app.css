@@ -34,8 +34,12 @@ code { font-family: ui-monospace, monospace; color: var(--warn); }
   font-size: 13px; padding: 6px 12px; border-radius: 999px; background: #121212; border: 1px solid var(--line);
   color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%;
 }
+.chip { cursor: pointer; font-family: inherit; min-height: 34px; }
 .chip.ok { color: var(--accent); }
+.chip.warn { color: var(--warn); border-color: #4a3a12; }
 .chip.bad { color: var(--bad); border-color: #4a1d1b; }
+.chip.flash { animation: flash 1.4s ease-out; }
+@keyframes flash { 0% { box-shadow: 0 0 0 0 rgba(93, 242, 160, .8); background: #0d2b1d; } 100% { box-shadow: 0 0 0 14px rgba(93, 242, 160, 0); } }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; }
 @media (max-width: 340px) { .grid { grid-template-columns: 1fr 1fr; gap: 10px; } }
@@ -107,3 +111,15 @@ code { font-family: ui-monospace, monospace; color: var(--warn); }
 }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Stick sheet */
+.progress { margin: 16px 0 4px; }
+.progress .bar { height: 10px; border-radius: 6px; background: #1c1c1c; overflow: hidden; }
+.progress .bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+.progress p { margin: 8px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 10px; font-size: 15px; overflow-wrap: anywhere; }
+.info li { padding: 10px 12px; border-radius: 12px; background: #141414; }
+.info li.warn { color: #ffe1a3; background: #1f1806; }
+.info li.bad { color: #ffd9d6; background: #1d0b0a; }
+.info code { font-size: 13px; }
+#stick { overflow-y: auto; }

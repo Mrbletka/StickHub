@@ -1,11 +1,14 @@
 // StickHub UI. Vanilla JS: state comes from /api/events (SSE), actions are POSTs to /api/apps/<id>/...
 // Tap a tile = start (if needed) and open. Long-press (or right-click) = menu.
 
+import { chipFor, fillStickSheet, esc } from './stick.js';
+
 const $ = (sel) => document.querySelector(sel);
 const grid = $('#grid');
 const chip = $('#chip');
 const menu = $('#menu');
 const logs = $('#logs');
+const stickSheet = $('#stick');
 
 /** @type {Map<string, object>} app id -> public app view from the server */
 const apps = new Map();
@@ -14,8 +17,6 @@ let hubStatus = null;
 let events = null;
 const LONG_PRESS_MS = 450;
 
-/** Escape text for HTML. */
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const STATUS_TEXT = { stopped: 'Stopped', starting: 'Starting…', running: 'Running', stopping: 'Stopping…', error: 'Error' };
 
@@ -28,6 +29,7 @@ function iconHtml(app) {
 function subText(app) {
   if (app.problems.length) return 'Broken: tap for details';
   if (app.status === 'error') return 'Error: tap for details';
+  if (hubStatus?.stick?.pending?.includes(app.id)) return app.status === 'running' ? 'Running · data waits' : 'Data waits for sync';
   return app.status === 'stopped' ? '' : STATUS_TEXT[app.status];
 }
 
@@ -150,16 +152,36 @@ function connect(logsFor = null) {
     render();
   });
   events.addEventListener('app', (e) => { const a = JSON.parse(e.data); apps.set(a.id, a); render(); });
-  events.addEventListener('status', (e) => { hubStatus = JSON.parse(e.data); setChip(hubStatus); });
+  events.addEventListener('status', (e) => {
+    const prev = hubStatus?.stick?.state;
+    hubStatus = JSON.parse(e.data);
+    if (prev && prev !== 'connected' && hubStatus.stick?.state === 'connected') flashChip();
+    render();
+    if (stickSheet.open) fillStickSheet($, hubStatus.stick);
+  });
   events.addEventListener('log', (e) => { const l = JSON.parse(e.data); if (logs.open && l.id === logsFor) addLogLine(l); });
   events.onerror = () => { chip.textContent = 'Hub not reachable'; chip.className = 'chip bad'; };
 }
 
 function setChip(status) {
   const running = [...apps.values()].filter((a) => a.status === 'running').length;
-  const stick = status.stick?.state === 'connected' ? 'Stick connected' : 'No stick info yet';
-  chip.textContent = running ? `${running} running · ${stick}` : stick;
-  chip.className = status.stick?.state === 'connected' ? 'chip ok' : 'chip';
+  const { text, cls } = chipFor(status.stick, running);
+  chip.textContent = text;
+  chip.className = `chip ${cls}${chip.classList.contains('flash') ? ' flash' : ''}`;
+}
+
+// Short "Stick connected" animation on plug-in.
+function flashChip() {
+  chip.classList.remove('flash');
+  void chip.offsetWidth; // restart the CSS animation
+  chip.classList.add('flash');
+  setTimeout(() => chip.classList.remove('flash'), 1500);
+}
+
+async function stickAction(act) {
+  if (act === 'close') return stickSheet.close();
+  const res = await fetch(act === 'sync' ? '/api/sync' : '/api/sync/cancel', { method: 'POST' });
+  if (!res.ok) toast((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
 }
 
 // ---------- press handling: tap vs long-press, touch and mouse ----------
@@ -206,6 +228,16 @@ function closeOnBackdrop(dialog) {
 }
 closeOnBackdrop(menu);
 closeOnBackdrop(logs);
+closeOnBackdrop(stickSheet);
+
+chip.addEventListener('click', () => {
+  fillStickSheet($, hubStatus?.stick);
+  stickSheet.showModal();
+});
+stickSheet.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-act]');
+  if (btn) stickAction(btn.dataset.act).catch((err) => toast(err.message));
+});
 
 menu.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-act]');

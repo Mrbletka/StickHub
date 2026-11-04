@@ -12,7 +12,7 @@
 <body>
 <header class="bar">
   <h1>StickHub</h1>
-  <span id="chip" class="chip" role="status">Connecting…</span>
+  <button id="chip" class="chip" type="button" aria-live="polite">Connecting…</button>
 </header>
 
 <main>
@@ -44,6 +44,24 @@
     <button data-act="close" class="ghost">Close</button>
   </div>
   <pre id="logs-text" class="log"></pre>
+</dialog>
+
+<dialog id="stick" class="sheet">
+  <div class="sheet-head">
+    <div>
+      <h2 id="stick-name">Stick</h2>
+    </div>
+  </div>
+  <div id="stick-progress" class="progress" hidden>
+    <div class="bar"><span id="stick-bar"></span></div>
+    <p id="stick-progress-text" class="muted"></p>
+  </div>
+  <ul id="stick-info" class="info"></ul>
+  <div class="actions">
+    <button data-act="sync" class="primary">Sync now</button>
+    <button data-act="cancel">Cancel sync</button>
+  </div>
+  <button data-act="close" class="ghost">Close</button>
 </dialog>
 
 <div id="toast" class="toast" role="alert" hidden></div>
