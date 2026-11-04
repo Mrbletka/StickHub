@@ -32,7 +32,7 @@ export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #queue; #reads = 0;
   #packs; #opts; #autoEvery = 4; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0; #maintained = false; #dirty = false;
-  #closing = false; #maint; #cleanupMax = CLEANUP_MAX;
+  #closing = false; #maint; #cleanupMax = CLEANUP_MAX; #indexCache = new Map();
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -373,7 +373,7 @@ export class Store {
   /** One capped cleanup run (cleanup.mjs). */
   async #cleanupRun() {
     if (this.#reads) return { done: false, level: 'none', reasons: ['reads in progress'], removed: noRemovals(), indexFiles: this.#indexFiles, more: false, left: 0 };
-    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems, max: this.#cleanupMax });
+    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems, max: this.#cleanupMax, cache: this.#indexCache });
     this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons, more: r.more };
     if (r.done && r.level === 'full' && !r.more) this.#dirty = false; // the header backup is the last thing a run does
     this.#indexFiles = r.indexFiles;

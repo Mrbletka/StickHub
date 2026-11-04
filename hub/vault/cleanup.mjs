@@ -11,7 +11,7 @@
 // Capped (job 2b): one run does at most `max` units of work (a deleted file, or the header backup completion) in this
 // order: index .part files, valid index files beyond the 2 newest, unused packs, header .part files, header backup.
 // It answers more: true when work is left, and left: how many units this run saw and did not do. The next run starts
-// again from its own scan and checks.
+// again from its own scan and checks; only older index files may come from the store's cache (replica.scanIndexes).
 
 import { join } from 'node:path';
 import { fail, ioError } from './errors.mjs';
@@ -29,8 +29,9 @@ export const noRemovals = () => ({ indexParts: 0, indexes: 0, packs: 0, headerPa
 
 /**
  * One capped cleanup run.
- * @param {{dir: string, vfs: object, ctx: object, dk: Buffer, current: string, problems: string[], max?: number}} o
- *   current: the newest index file the store knows; problems: what the store found when it opened; max: units of work
+ * @param {{dir: string, vfs: object, ctx: object, dk: Buffer, current: string, problems: string[], max?: number,
+ *   cache?: Map}} o  current: the newest index file the store knows; problems: what the store found when it opened;
+ *   max: units of work; cache: decoded older index files from earlier runs (see scanIndexes)
  * @returns {Promise<{done: boolean, level: 'full'|'light'|'none', reasons: string[], removed: object, indexFiles: number,
  *   more: boolean, left: number}>}  reasons: why full (or any) cleanup was refused, each once; indexFiles: files left
  *   in _index; more: work is left for another run; left: units of work this run saw but left for later
@@ -41,7 +42,7 @@ export async function runCleanup(o) {
   if (!Number.isSafeInteger(max) || max < 1) fail('BAD_INPUT', 'cleanup: max must be a whole number from 1');
   const removed = noRemovals();
   try {
-    const scan = await scanIndexes(dir, o.ctx, vfs);
+    const scan = await scanIndexes(dir, o.ctx, vfs, o.cache);
     const header = await checkHeaderCopies(dir, o.dk, o.ctx.vaultId, vfs); // now, not only at open
     const blockAll = orderProblems(scan);
     if (scan.valid[0]?.name !== o.current) blockAll.push('the newest index on disk is not the one this store knows');

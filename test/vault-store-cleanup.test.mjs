@@ -103,7 +103,9 @@ test('a damaged index file: only the light cleanup runs; packs, the damaged file
   writeFileSync(join(t.dir, '_index', newest), (b => { b[b.length - 5] ^= 1; return b; })(readFileSync(join(t.dir, '_index', newest))));
   // an older one damaged: the light cleanup runs
   const victim = names.find((n) => n !== newest);
-  damage(victim);
+  // another size: the store's index cache (job 2c) trusts an older file of the same name and size that it has read
+  // before (open and verify always read fresh, see vault-store-steps)
+  writeFileSync(join(t.dir, '_index', victim), Buffer.concat([damage(victim), Buffer.alloc(1)]));
   const keep = untouched(t.dir);
   const r1 = await t.store.cleanup(); // damaged after the store opened
   assert.equal(r1.level, 'light');

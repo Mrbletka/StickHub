@@ -1,7 +1,7 @@
 // Guarded file operations for the vault store. Every write-type step calls guard(op, path) first, so tests can
 // simulate the stick being pulled at any step (the same idea as hub/sync/fsx.mjs). Never uses file times.
 
-import { open, rename, unlink, opendir, mkdir } from 'node:fs/promises';
+import { open, rename, unlink, opendir, mkdir, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fail } from './errors.mjs';
 
@@ -139,5 +139,15 @@ export function createVfs(opts = {}) {
     }
   }
 
-  return { syncDir, mkdirp, writeNew, writeAtomic, remove, list, openRead, readLimited, guard };
+  /** Size of a file in bytes; a missing file gives null. */
+  async function size(path) {
+    try {
+      return (await stat(path)).size;
+    } catch (e) {
+      if (e.code === 'ENOENT') return null;
+      throw e;
+    }
+  }
+
+  return { syncDir, mkdirp, writeNew, writeAtomic, remove, list, openRead, readLimited, size, guard };
 }

@@ -112,33 +112,60 @@ export async function writeHeaderFiles(dir, text, vfs) {
   await vfs.writeAtomic(join(dir, HEADER_BACKUP), text);
 }
 
+/** Index files decoded by scanIndexes so far (tests count cache hits with it). */
+export const scanStats = { decoded: 0 };
+
 /**
  * Read every committed index file. Decrypt failures are listed, never fatal; I/O errors (a pulled stick) are thrown.
+ * With a cache (cleanup runs only, job 2c), older index files may come from it; the 2 newest valid ones never do:
+ * - every run lists _index; a name not in the cache, or with another size than cached, is decoded;
+ * - a cached entry that ends up among the 2 newest is decoded again, until the 2 newest valid are fresh;
+ * - a file that does not decrypt is never cached; names that are gone are dropped from the cache.
+ * A cached entry holds only what cleanup needs of an older file: its size, seq and replica.
  * @param {string} dir
  * @param {{kFile: Buffer, vaultId: Buffer, epoch: number}} ctx
  * @param {ReturnType<import('./vfs.mjs').createVfs>} vfs
+ * @param {Map<string, {size: number, seq: number, replica: string}>|null} [cache]
  * @returns {Promise<{valid: {name: string, seq: number, state: object}[], damaged: string[], parts: string[], count: number}>}
- *   valid sorted newest first; parts = leftover <id>.vx.part files; count = all files in _index
+ *   valid sorted newest first (entries from the cache have a state with only `replica`); parts = leftover
+ *   <id>.vx.part files; count = all files in _index
  */
-export async function scanIndexes(dir, ctx, vfs) {
+export async function scanIndexes(dir, ctx, vfs, cache = null) {
   const names = await vfs.list(join(dir, INDEX_DIR), MAX_INDEX_FILES);
   const valid = [];
   const damaged = [];
   const parts = [];
+  const decode = async (name) => { // a valid entry, 'damaged', or null when the file is gone
+    try {
+      const file = await vfs.readLimited(join(dir, INDEX_DIR, name), vxSize(MAX_PAYLOAD.index));
+      if (!file) return null;
+      scanStats.decoded++;
+      const state = decodeIndex(openVx(file, ctx, { kind: 'index', fileId: parseVxFileName(name) }), ctx);
+      cache?.set(name, { size: file.length, seq: state.seq, replica: state.replica });
+      return { name, seq: state.seq, state };
+    } catch (e) {
+      if (!(e instanceof VaultError) || !vaultCodes.has(e.code)) throw e;
+      cache?.delete(name);
+      return 'damaged';
+    }
+  };
+  const add = (name, v) => { if (v === 'damaged') damaged.push(name); else if (v) valid.push(v); };
   for (const name of names.sort()) {
     if (name.endsWith('.part') && isVxName(name.slice(0, -5))) { parts.push(name); continue; }
     if (!isVxName(name)) continue; // not ours: never touched
-    try {
-      const file = await vfs.readLimited(join(dir, INDEX_DIR, name), vxSize(MAX_PAYLOAD.index));
-      if (!file) continue;
-      const state = decodeIndex(openVx(file, ctx, { kind: 'index', fileId: parseVxFileName(name) }), ctx);
-      valid.push({ name, seq: state.seq, state });
-    } catch (e) {
-      if (!(e instanceof VaultError) || !vaultCodes.has(e.code)) throw e;
-      damaged.push(name);
-    }
+    const c = cache?.get(name);
+    if (c && c.size === await vfs.size(join(dir, INDEX_DIR, name))) valid.push({ name, seq: c.seq, state: { replica: c.replica }, cached: true });
+    else add(name, await decode(name));
   }
-  valid.sort((a, b) => b.seq - a.seq || (a.name < b.name ? 1 : -1));
+  if (cache) { const now = new Set(names); for (const name of cache.keys()) if (!now.has(name)) cache.delete(name); }
+  const order = () => valid.sort((a, b) => b.seq - a.seq || (a.name < b.name ? 1 : -1));
+  order();
+  for (let k = valid.slice(0, 2).findIndex((v) => v.cached); k >= 0; k = valid.slice(0, 2).findIndex((v) => v.cached)) {
+    const [old] = valid.splice(k, 1); // among the 2 newest: read it fresh
+    add(old.name, await decode(old.name));
+    order();
+  }
+  for (const v of valid) delete v.cached;
   return { valid, damaged, parts, count: names.length };
 }
 

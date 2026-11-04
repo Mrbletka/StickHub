@@ -5,11 +5,12 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, copyFileSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openVaultFolder } from '../hub/vault/store.mjs';
 import { unlockWithPassphrase } from '../hub/vault/header.mjs';
+import { scanStats } from '../hub/vault/replica.mjs';
 import { makeTestStore } from './vault-helpers.mjs';
 
 const roots = [];
@@ -221,4 +222,75 @@ test('maintain() during an automatic chain: the automatic one gives way', async 
   assert.ok(files(t.dir, '_index').length <= 2);
   await s.close();
   await assertGood(t.dir, t.v);
+});
+
+/** A vault of 12 commits; the index file names in commit order (oldest first), from the guard. */
+async function history() {
+  const names = [];
+  const t = await makeTestStore({ autoCleanupEvery: 0, guard: (op, p) => { if (op === 'rename' && p.includes('_index')) names.push(basename(p)); } });
+  roots.push(t.root);
+  for (let i = 0; i < 11; i++) await t.store.write(`n/${i % 3}.md`, `version ${i}`);
+  await t.store.close();
+  assert.equal(names.length, 12);
+  return { t, names };
+}
+
+/** Open with cleanupMax 1 and do exactly one cleanup run (a read opened after the first deletion ends the chain). */
+async function oneRun(t, c) {
+  let it = null;
+  let s;
+  s = await open(t.dir, t.v, { guard: (op) => { c.deleted += op === 'unlink'; if (op === 'unlink' && !it) { it = s.readChunks('n/0.md'); it.next(); } }, cleanupMax: 1, autoCleanupEvery: 0 });
+  assert.equal((await s.cleanup()).steps, 2);
+  await it.return();
+  return s;
+}
+
+test('the index cache: a stepped cleanup decodes each older index file once', async () => {
+  const t = await backlog(30);
+  const s = await open(t.dir, t.v, { cleanupMax: 1, autoCleanupEvery: 0 });
+  const before = scanStats.decoded;
+  const r = await s.cleanup();
+  const decoded = scanStats.decoded - before;
+  assert.equal(r.more, false);
+  assert.ok(decoded <= 17 + 2 * r.steps, `${decoded} index files decoded in ${r.steps} runs`);
+  await s.close();
+  await assertGood(t.dir, t.v);
+});
+
+test('the index cache never decides the 2 newest: a damaged one that moves up is read fresh', async () => {
+  const { t, names } = await history();
+  const c = { deleted: 0 };
+  const s = await oneRun(t, c); // the cache now holds every index file
+  const idx = (n) => join(t.dir, '_index', n);
+  const left = names.filter((n) => files(t.dir, '_index').includes(n)); // oldest first
+  rmSync(idx(left.at(-2))); // the second newest is gone: the third moves up ...
+  const f = readFileSync(idx(left.at(-3)));
+  f[f.length - 20] ^= 1; // ... and it is damaged, same size (only a fresh read can see that)
+  writeFileSync(idx(left.at(-3)), f);
+  const packs = files(t.dir, '_packs').length;
+  const r = await s.cleanup();
+  assert.ok(r.reasons.includes('damaged index file'), JSON.stringify(r.reasons));
+  assert.equal(r.level, 'light');
+  assert.equal(r.removed.packs, 0);
+  assert.equal(files(t.dir, '_packs').length, packs, 'no pack deleted');
+  await s.close();
+});
+
+test('the index cache: a changed size is decoded again; verify and open always read fresh', async () => {
+  const { t, names } = await history();
+  const s = await oneRun(t, { deleted: 0 });
+  const idx = (n) => join(t.dir, '_index', n);
+  const old = names.filter((n) => files(t.dir, '_index').includes(n))[2];
+  const f = readFileSync(idx(old));
+  f[f.length - 20] ^= 1; // an older file, same size: the cache does not see it ...
+  writeFileSync(idx(old), f);
+  assert.deepEqual((await s.verify()).indexes.damaged, [old], '... verify does');
+  const re = await open(t.dir, t.v, { autoCleanupEvery: 0 });
+  assert.deepEqual(re.status().problems, ['damaged index file'], '... and so does a fresh open');
+  await re.close();
+  writeFileSync(idx(old), f.subarray(0, f.length - 1)); // another size: the next run decodes it
+  const r = await s.cleanup();
+  assert.ok(r.reasons.includes('damaged index file'));
+  assert.equal(r.removed.packs, 0);
+  await s.close();
 });
