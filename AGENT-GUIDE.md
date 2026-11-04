@@ -91,11 +91,21 @@ Adding an engine = adding one file. Leave room for cli, custom command and game-
 - Hub port is fixed: 127.0.0.1:8787 (fixed so the PWA origin stays stable; fail loudly if taken). App ports 4100-4199.
 - One server for UI + API (JSON + SSE): list apps, start/stop/restart, status, live logs, stick + sync status. No framework.
 - Process manager: spawn, track, graceful stop (SIGTERM, then SIGKILL), no zombies, ring-buffer logs, clean up on hub exit.
-  Later phase: remember app PIDs and clean up leftover app processes after a hard kill of the hub.
-- Security (a web page in my browser can try to call 127.0.0.1): check Host, Origin and Sec-Fetch-Site (done in phase 1), require a random per-install token on every state-changing call (cookie HttpOnly + SameSite=Strict, set from the first URL the watcher opens), launch only apps from validated manifests, never run commands taken from API input.
+  Leftovers after a hard kill of the hub: app PIDs + exact command lines are saved in ~/.stickhub/apps-running.json;
+  the next hub start stops a saved PID only if /proc/<pid>/cmdline still matches. Never kill by PID alone.
+- Security (a web page in my browser can try to call 127.0.0.1): check Host, Origin and Sec-Fetch-Site, launch only apps
+  from validated manifests, never run commands taken from API input. Token: random per install in ~/.stickhub/token.json,
+  sent as the X-Hub-Token header on every API call (open: /api/ping, /api/auth/exchange, app icons). NO cookies: cookies on
+  127.0.0.1 reach every app port. The browser keeps the token in localStorage (per origin, port included). URLs only ever
+  carry a one-time login code (~60 s, used once) that the hub page swaps for the token; `hub login` prints or opens a fresh one.
+  EventSource cannot send headers, so the page reads the event stream with fetch().
 
 ## UI (vanilla, mobile-first, installable PWA)
 - Dark, AMOLED black. Big tile grid: icon, name, status dot. Tap = start (if needed) and open. Long-press = menu (stop, restart, logs).
+- Player: a running app opens full screen in an iframe inside the hub page, with a small floating (draggable) Home button.
+  Android back = Home. Apps keep their own port = own origin, so they cannot read the hub token. Same host = same site,
+  so Chrome does not partition their storage. (Not a reverse proxy under /app/<id>/: that would put every app on the
+  hub's origin, next to the token.)
 - Status chip: stick connected / syncing / conflicts / stick has a different commit. A tile whose data waits for sync shows "pending".
 - "Sync now" button. Short "Stick connected" animation on plug-in.
 - Safe-area insets, no hover-only features, CSS animations only, no heavy WebGL.
@@ -129,7 +139,9 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
   appears, with no `termux-setup-storage` (measured; it also pops up a screen). Run it only once, at install.
 - Found: start the hub if it is not running, sync data, open `termux-open-url http://127.0.0.1:8787/?t=<token>`.
   Stick removed: stop writing, finish or roll back the journal, update status.
-- Run under `termux-wake-lock`. CLI: `hub watch start|stop|status`.
+- Run under `termux-wake-lock`. CLI: `node hub/cli.mjs watch start|stop|status`.
+- Start with one tap: `node hub/cli.mjs widget install` writes ~/.shortcuts/tasks/StickHub (Termux:Widget). Termux:Boot
+  is not installed, so after a phone restart or Termux being killed the watcher must be started again (tap the widget).
 - If opening Chrome from the background fails, show a termux-notification with a tap action instead.
 
 ## Build order (stop after each phase and report)

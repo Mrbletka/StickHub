@@ -10,8 +10,22 @@ node --test                  # all tests
 sh probes/run-all.sh         # phone-only measurements (Termux), result goes to the clipboard
 ```
 
+## On the phone (first time)
+```sh
+cd ~/StickHub && node hub/cli.mjs open          # starts the hub in the background and opens it (logged in)
+node hub/cli.mjs widget install                 # home-screen shortcuts for Termux:Widget
+```
+1. Install the app: in Chrome's menu tap **Add to Home screen** / **Install app**. It then opens full screen.
+2. Add the widget: long-press the home screen > Widgets > Termux:Widget > **StickHub**.
+3. One tap on **StickHub** starts the watcher and opens the hub. With the watcher running, plugging in the stick opens the
+   hub by itself. After a phone restart (or if Android closes Termux) tap **StickHub** again.
+4. "Log in to StickHub" on screen? Run `node hub/cli.mjs login --open` (a one-time link, valid about 60 s).
+
+Settings (optional) in `~/.stickhub/settings.json`: `{ "requireStick": false, "autoPull": false }`.
+`requireStick`: no stick, no hub. `autoPull`: the watcher runs `git pull --ff-only` on plug-in.
+
 ## Use
-- Tap a tile: the app starts (if needed) and opens.
+- Tap a tile: the app starts (if needed) and opens full screen. The round Home button (drag it anywhere) or Android back returns.
 - Long-press a tile (right-click on a PC): Open, Restart, Stop, Logs.
 - A broken app shows "Broken" on its tile; long-press it to see why.
 - Tap the chip at the top: stick status, sync progress, Sync now, Cancel, conflicts.
@@ -23,6 +37,10 @@ node hub/cli.mjs stick init --name "My stick"      # create HUB/ (never touches 
 node hub/cli.mjs sync plan                         # what would be copied (changes nothing)
 node hub/cli.mjs sync run [all|data|code]          # Ctrl+C cancels safely; run again to finish
 node hub/cli.mjs code pull-from-stick [--yes]      # explicit stick -> phone code copy (clean clone only)
+node hub/cli.mjs login [--open]                    # fresh one-time login link
+node hub/cli.mjs open                              # start the hub if needed, open it
+node hub/cli.mjs hub stop                          # stop the hub and its apps
+node hub/cli.mjs watch start|stop|status           # the watcher
 ```
 - The hub finds the stick by itself (`/proc/self/mountinfo`, every 2 s) and syncs on plug-in and after an app stops.
 - Code: git is the master. Only `hub/` and `apps/` go to the stick, and only when the clone has no uncommitted
@@ -56,7 +74,11 @@ hub/static-files.mjs  static serving (MIME, Range, ETag, no traversal, SPA)
 hub/cli.mjs           command line: stick, sync, code pull-from-stick
 hub/stick.mjs         find, validate and init the stick; the sync lock
 hub/sync/             scan, plan, run (journal, resume, cancel), hub service, safe names, file ops
-hub/platform/         adapters: volumes (mountinfo), git
+hub/platform/         adapters: volumes (mountinfo), Termux actions, git
+hub/watcher.mjs       opens the hub when the stick is plugged in
+hub/auth.mjs          token and one-time login codes
+hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
+hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
 hub/ui/               the web UI (vanilla)
 apps/                 the apps (tap-counter, pocket-timer are samples)
 probes/               phone-only measurements, results in docs/PROBES.md
@@ -64,8 +86,14 @@ test/                 node:test suites
 ```
 
 ## API
+Every call needs the header `X-Hub-Token`, except `GET /api/ping`, `POST /api/auth/exchange` and app icons.
+
 | Method | Path | |
 |---|---|---|
+| GET | /api/ping | is the hub running (open) |
+| POST | /api/auth/exchange | body `{"code"}`: one-time code -> token (open) |
+| POST | /api/auth/code | a fresh one-time login link |
+| POST | /api/hub/stop | stop the hub and its apps |
 | GET | /api/status | hub info, commit, engines |
 | GET | /api/apps | all apps with status |
 | POST | /api/apps/reload | re-read apps/ |
