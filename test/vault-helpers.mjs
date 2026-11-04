@@ -72,3 +72,19 @@ export function flipB64u(s, byte = 0) {
   b[byte] ^= 1;
   return b.toString('base64url');
 }
+
+/**
+ * A new empty vault folder in a temp dir, opened. TEST ONLY.
+ * @param {{guard?: Function, limits?: object}} [o]
+ */
+export async function makeTestStore(o = {}) {
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Store } = await import('../hub/vault/store.mjs');
+  const v = await makeTestVault();
+  const root = mkdtempSync(join(tmpdir(), 'stickhub-vault-'));
+  const dir = join(root, 'data');
+  const store = await Store.create(dir, { headerText: v.text, dk: v.dk, ...o });
+  return { v, root, dir, store };
+}

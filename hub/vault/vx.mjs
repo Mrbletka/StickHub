@@ -322,3 +322,8 @@ export function parseVxFileName(name) {
   if (typeof name !== 'string' || !name.endsWith('.vx')) fail('BAD_VX', 'not a vault file name');
   return nameToFileId(name.slice(0, -3));
 }
+
+/** Size of one full segment in the file (64 KiB + tag). */
+export const FULL_SEGMENT = FULL;
+// Internals for the range reader (vxread.mjs). Not for other callers.
+export { decSeg as decryptSegment, headerBytes as vxHeaderBytes, checkHead as checkVxHeader };
