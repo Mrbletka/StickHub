@@ -174,6 +174,7 @@ A finished phase is recorded here with its commit hash (no git tags).
 
 Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` (see "Making apps").
 - App #1 Notebook (apps/notebook): notes as plain files in HUB_DATA_DIR/vault, VS Code-style Explorer. See its README.
+  **Done: 09c5942** (tested on the phone 2026-11-04). Later: full-text search, tags, pins, [[wiki links]], conflict compare view.
 
 ## Delivery
 - Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
