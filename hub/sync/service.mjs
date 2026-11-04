@@ -121,7 +121,7 @@ export class StickService extends EventEmitter {
       this.device ??= this.o.device || await deviceId();
       this.run = new SyncRun({
         root: this.o.root, hubDir: s.hubDir, stick: s.info, fsx: createFsx(), git: this.git, device: this.device,
-        running: () => new Set([...procman.apps.keys()].filter((id) => procman.isActive(id))),
+        running: () => procman.syncBlockers(),
         what: { data: what !== 'code', code: what !== 'data' },
       });
       this.progress = { ...this.run.progress, what };

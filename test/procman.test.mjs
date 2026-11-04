@@ -26,6 +26,8 @@ before(async () => {
     'Bad_Folder': { 'app.json': { id: 'x', name: 'X', engine: 'static' } },
     mismatch: { 'app.json': { id: 'other', name: 'M', engine: 'static' } },
     noengine: { 'app.json': { id: 'noengine', name: 'N', engine: 'python' } },
+    atomic: { 'app.json': { id: 'atomic', name: 'Atomic', engine: 'static', atomicData: true }, 'index.html': 'a' },
+    fixed: { 'app.json': { id: 'fixed', name: 'Fixed', engine: 'static', port: 47100 }, 'index.html': 'f' },
   });
   const { engines } = await loadEngines();
   pm = new ProcessManager({ engines, appsDir: fx.appsDir, dataDir: fx.dataDir, portRange: RANGE, startTimeoutMs: 1500 });
@@ -117,4 +119,16 @@ test('the sample app saves into its data dir', async () => {
   const t = await real.start('pocket-timer');
   assert.match((await http(t.port, '/')).body, /Pocket Timer/);
   await real.stopAll();
+});
+
+test('atomicData apps do not block sync; fixed ports are kept free for their app', async () => {
+  const a = await pm.start('atomic');
+  const g = await pm.start('good');
+  assert.deepEqual([...pm.syncBlockers()], ['good']);
+  assert.equal(pm.view('atomic').atomicData, true);
+  assert.notEqual(g.port, 47100, 'the fixed port of "fixed" is not handed out');
+  const f = await pm.start('fixed');
+  assert.equal(f.port, 47100);
+  await pm.stopAll();
+  void a;
 });

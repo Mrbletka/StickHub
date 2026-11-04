@@ -68,6 +68,7 @@ export class ProcessManager extends EventEmitter {
     return {
       id, name: a?.manifest?.name || id, description: a?.manifest?.description || '',
       engine: a?.manifest?.engine || null, version: a?.manifest?.version || null, hasIcon: !!a?.manifest?.icon,
+      atomicData: a?.manifest?.atomicData === true,
       status: s.status, port: s.port, url: s.url, error: s.error, startedAt: s.startedAt,
       problems: a?.errors || [],
     };
@@ -76,6 +77,11 @@ export class ProcessManager extends EventEmitter {
   /** Recent log lines of an app. */
   logs(id, after = 0) {
     return this.state.get(id)?.log.since(after) || [];
+  }
+
+  /** Running apps whose data sync must wait (apps with atomicData: true do not block sync). */
+  syncBlockers() {
+    return new Set([...this.apps.keys()].filter((id) => this.isActive(id) && this.apps.get(id).manifest?.atomicData !== true));
   }
 
   /** True while an app is starting, running or stopping. */
@@ -178,7 +184,9 @@ export class ProcessManager extends EventEmitter {
       if (!(await isPortFree(app.manifest.port))) throw new Error(`Port ${app.manifest.port} is already in use`);
       return app.manifest.port;
     }
+    // Fixed ports of other apps are never handed out automatically, even while those apps are stopped.
     const taken = new Set([...this.state.values()].map((s) => s.port).filter(Boolean));
+    for (const a of this.apps.values()) if (a.id !== app.id && Number.isInteger(a.manifest?.port)) taken.add(a.manifest.port);
     return findFreePort(this.portRange, taken);
   }
 

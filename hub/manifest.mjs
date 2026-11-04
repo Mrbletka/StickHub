@@ -2,7 +2,7 @@
 // One broken manifest must never break the hub, so this returns errors instead of throwing.
 
 export const ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-const KEYS = new Set(['id', 'name', 'icon', 'engine', 'entry', 'port', 'args', 'env', 'version', 'description', 'spa', 'health']);
+const KEYS = new Set(['id', 'name', 'icon', 'engine', 'entry', 'port', 'args', 'env', 'version', 'description', 'spa', 'health', 'atomicData']);
 const RESERVED_ENV = /^(PORT|HUB_.*|NODE_OPTIONS)$/;
 // exFAT cannot store these, and they have no place in a relative path anyway.
 const BAD_CHARS = /[<>:"\\|?*\u0000-\u001f]/;
@@ -67,6 +67,8 @@ export function validateManifest(m, opts = {}) {
     errors.push('version: like "1.2.3"');
   }
   if (m.spa !== undefined && typeof m.spa !== 'boolean') errors.push('spa: true or false');
+  // atomicData: the app only writes its data with temp file + rename, so sync may copy it while the app runs.
+  if (m.atomicData !== undefined && typeof m.atomicData !== 'boolean') errors.push('atomicData: true or false');
   if (m.health !== undefined && (typeof m.health !== 'string' || !/^\/[\w\-./]*$/.test(m.health))) errors.push('health: a path like "/health"');
 
   if (!errors.length && opts.engines) {

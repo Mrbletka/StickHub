@@ -28,6 +28,7 @@ test('bad ids, folders, engines and keys are errors', () => {
     [{ ...good, env: { HUB_DATA_DIR: '/x' } }, /set by the hub/],
     [{ ...good, env: { A: 1 } }, /env.A/],
     [{ ...good, version: 'one' }, /version/],
+    [{ ...good, atomicData: 'yes' }, /atomicData/],
     [{ ...good, entry: undefined }, /entry: needed/],
     [[], /JSON object/],
     [null, /JSON object/],

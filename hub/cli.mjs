@@ -82,7 +82,7 @@ async function runningApps() {
   const r = await callHub('/api/apps', { token: await readToken(stickhubHome()), timeout: 1500 });
   if (!r) return new Set(); // hub not running: no app runs
   if (r.status !== 200 || !Array.isArray(r.body)) throw new Error(`The hub answered ${r.status}; cannot tell which apps run. Stop the hub or try again.`);
-  return new Set(r.body.filter((a) => a.status !== 'stopped' && a.status !== 'error').map((a) => a.id));
+  return new Set(r.body.filter((a) => a.status !== 'stopped' && a.status !== 'error' && !a.atomicData).map((a) => a.id));
 }
 
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
