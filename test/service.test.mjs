@@ -26,10 +26,11 @@ test('hub: plug-in sync, Sync now, pending while an app runs, sync after it stop
   gitc(fx.root, 'commit', '-qm', 'demo app');
   let volumes = [];
   const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 47150, to: 47160 },
-    stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000aa' } });
+    stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000aa' }, home: join(fx.base, 'home') });
   const port = Number(new URL(await hub.listen()).port);
-  const post = (path) => http(port, path, { method: 'POST' });
-  const stick = async () => JSON.parse((await http(port, '/api/stick')).body);
+  const auth = { 'x-hub-token': hub.token };
+  const post = (path) => http(port, path, { method: 'POST', headers: auth });
+  const stick = async () => JSON.parse((await http(port, '/api/stick', { headers: auth })).body);
   try {
     assert.equal((await stick()).state, 'none');
     assert.equal((await post('/api/sync')).status, 409);

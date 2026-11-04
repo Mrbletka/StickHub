@@ -33,7 +33,7 @@ process.on('SIGTERM', () => s.close(() => process.exit(0)));
  * HTTP request to 127.0.0.1:port. Resolves { status, headers, body }.
  * @param {number} port
  * @param {string} path
- * @param {{method?: string, headers?: object}} [opts]
+ * @param {{method?: string, headers?: object, body?: string}} [opts]
  */
 export function http(port, path, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -44,6 +44,6 @@ export function http(port, path, opts = {}) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }));
     });
     req.on('error', reject);
-    req.end();
+    req.end(opts.body);
   });
 }

@@ -10,6 +10,8 @@ import { createApi, json } from './api.mjs';
 import { serveStatic, send } from './static-files.mjs';
 import { codeCommit } from './version.mjs';
 import { StickService } from './sync/service.mjs';
+import { loadToken, LoginCodes } from './auth.mjs';
+import { stickhubHome } from './config.mjs';
 
 export const HUB_PORT = 8787;
 const HUB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -19,11 +21,15 @@ const ROOT = dirname(HUB_DIR);
  * Build the hub (does not listen yet).
  * @param {{root?: string, appsDir?: string, dataDir?: string, port?: number,
  *   portRange?: {from: number, to: number}, startTimeoutMs?: number,
- *   stick?: {listVolumes?: Function, pollMs?: number, autoSync?: boolean, device?: string, git?: object}}} [opts]
- *   stick: options for the stick service (tests pass fakes)
+ *   stick?: {listVolumes?: Function, pollMs?: number, autoSync?: boolean, device?: string, git?: object},
+ *   home?: string, shutdown?: () => void}} [opts]
+ *   stick: options for the stick service (tests pass fakes); home: private folder (token, app PIDs)
  */
 export async function createHub(opts = {}) {
   const root = opts.root || ROOT;
+  const home = opts.home || stickhubHome();
+  const token = await loadToken(home);
+  const codes = new LoginCodes();
   const port = opts.port ?? HUB_PORT;
   const { engines, errors: engineErrors } = await loadEngines();
   const procman = new ProcessManager({
@@ -34,7 +40,7 @@ export async function createHub(opts = {}) {
   const commit = await codeCommit(root).catch(() => null);
   const stick = new StickService({ root, procman, ...opts.stick });
   const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status() });
-  const api = createApi({ procman, stick, status });
+  const api = createApi({ procman, stick, status, token, codes, shutdown: () => opts.shutdown?.() });
   const uiDir = join(HUB_DIR, 'ui');
 
   const server = createServer(async (req, res) => {
@@ -62,7 +68,7 @@ export async function createHub(opts = {}) {
   });
 
   return {
-    server, procman, stick,
+    server, procman, stick, token, codes, home,
     /** Start listening, then start watching for the stick. Rejects with EADDRINUSE when the port is taken. */
     listen: () => new Promise((resolve, reject) => {
       server.once('error', reject);
@@ -84,7 +90,8 @@ export async function createHub(opts = {}) {
 }
 
 async function main() {
-  const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT });
+  let shutdown = () => {};
+  const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0) });
   for (const e of hub.procman.list()) if (e.problems.length) console.warn(`app ${e.id}: ${e.problems.join('; ')}`);
   let url;
   try {
@@ -99,7 +106,7 @@ async function main() {
   console.log(`StickHub running: ${url}  (${hub.procman.list().length} apps, Ctrl+C to stop)`);
 
   let closing = false;
-  const shutdown = async (code = 0) => {
+  shutdown = async (code = 0) => {
     if (closing) return;
     closing = true;
     console.log('Stopping apps...');
