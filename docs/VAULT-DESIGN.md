@@ -475,7 +475,7 @@ open reads the truth from the disk. Several writes that arrive together share on
 pack and one index (group commit). The header is the only file changed in place: `.part`, fsync, rename, two copies.
 
 ### 8.3 Costs on the exFAT stick
-| Action | Plain files today (measured) | Vault (estimate, to be measured by probe 10) |
+| Action | Plain files today (measured) | Vault (estimate; probe 10 is written and measures these on the phone: the numbers replace this column after its run) |
 |---|---|---|
 | One Notebook save, data on the stick | 1 safe write, about 165 ms | new pack + new index: about 2 x 120-180 ms; a burst of saves = one commit |
 | Sync 120 changed small files | 15.5 s (129 ms per file) | 1 pack + 1 index on the stick: well under 1 s plus the bytes at 19 MB/s |

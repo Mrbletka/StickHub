@@ -211,7 +211,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - v1 step 1, crypto building blocks in hub/vault/ (KDFs, slots, paper code, generated passphrases, header, .vx files):
   **Done: 4640777** (tests only; nothing is wired into the hub yet; all 160 tests pass on the phone 2026-11-04). 
 - v1 step 2, part 1 (store core, API, range reads, limits, cleanup in hub/vault/): **Done: 56e54c0** (tests only;
-  not wired into the hub; all 190 tests pass on the phone 2026-11-04). Next: the rest of step 2 (`vault export`, `vault verify`, compaction, the store probe).
+  not wired into the hub; all 190 tests pass on the phone 2026-11-04).
+- v1 step 2, part 2: fixes C1-C4 (f219982), `vault verify` / `vault export` (1dd1b93), trash and compaction with
+  maintain() (abf92c4), probe 10 store part (this commit; phone run pending). Next: the probe 10 numbers, then step 3.
 - Store rules: a .vx file is never changed in place; index files are committed by rename; the newest index that
   decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
   queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files

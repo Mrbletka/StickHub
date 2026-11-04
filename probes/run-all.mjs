@@ -1,10 +1,10 @@
 // Runs the phone probes, saves the result in probes/out/ (git-ignored) and copies it to the clipboard.
-// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8,9] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
+// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8,9,10] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
 
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Report, run, hasCmd } from './lib.mjs';
+import { Report, run, hasCmd, ask } from './lib.mjs';
 import * as p0 from './p0-env.mjs';
 import { runIn as p5 } from './p5-fs-semantics.mjs';
 import { runIn as p4 } from './p4-speed.mjs';
@@ -15,6 +15,7 @@ import { run6 } from './p6-sync.mjs';
 import { run7 } from './p7-plug-open.mjs';
 import { run8 } from './p8-stick-mode.mjs';
 import { run9 } from './p9-keystore.mjs';
+import { run10 } from './p10-store.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -46,8 +47,8 @@ async function main() {
   const r = new Report();
   r.add(`# StickHub probes ${new Date().toISOString()}`);
   const ctx = {};
-  // Probe 0 picks the test folders for probes 4 and 5 (and prints the stick's volume path): run it only when needed.
-  if (!opts.only || [0, 4, 5].some((n) => opts.only.has(n))) await p0.run(r, opts, ctx);
+  // Probe 0 picks the test folders for probes 4, 5 and 10 (and prints the stick's volume path): only when needed.
+  if (!opts.only || [0, 4, 5, 10].some((n) => opts.only.has(n))) await p0.run(r, opts, ctx);
   try {
     await step(r, 5, opts, async () => {
       if (ctx.stickDir) { const d = join(ctx.stickDir, 'fs'); mkdirSync(d); await p5(r, d, 'stick'); }
@@ -57,6 +58,7 @@ async function main() {
       if (ctx.stickDir) { const d = join(ctx.stickDir, 'speed'); mkdirSync(d); await p4(r, d, 'stick', size); }
       const d = join(ctx.localDir, 'speed'); mkdirSync(d); await p4(r, d, 'phone, for comparison', size);
     });
+    await step(r, 10, opts, () => run10(r, ctx, ask));
   } finally {
     // Remove our temp folders before probe 1 asks you to pull the stick.
     for (const d of [ctx.stickDir, ctx.localDir]) {

@@ -193,3 +193,9 @@ keeps one safety net: if the hub page does not report itself visible within 2 s 
 
 ## Vault v1 step 2, part 1 (store) on the phone - 2026-11-04 (code ac569b2)
 `node --test`: 190 tests, 189 pass, 0 fail, 1 skipped (the fixture writer, by design), 26 s.
+
+## Probe 10 (vault store) - written, waiting for the phone run
+`sh probes/run-all.sh --only 10` measures the store on the stick and on the phone's storage (create, open, 30 single
+2 KB saves, a burst of 50, a 5 MB write and read, cleanup, open with 200+ notes, file sizes, folder fsync), then the
+pull test; after re-plugging, `node probes/p10-check.mjs` opens what the pull left. The numbers go here and into
+docs/VAULT-DESIGN.md 8.3.
