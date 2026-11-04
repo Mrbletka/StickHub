@@ -2,37 +2,82 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#000000">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover,interactive-widget=resizes-content">
+<meta name="theme-color" content="#0b0b0f">
 <title>Notebook</title>
-<style>
-  html, body { margin: 0; height: 100%; background: #000; color: #f2f2f2; font-family: system-ui, sans-serif; }
-  body { display: grid; place-items: center; text-align: center; touch-action: manipulation; user-select: none;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
-  h1 { font-size: 28px; margin: 0 0 12px; }
-  p { color: #8a8a8a; }
-  button { all: unset; margin-top: 20px; padding: 16px 28px; border-radius: 16px; background: #5df2a0; color: #002814; font-weight: 700; font-size: 18px; }
-  button:active { transform: scale(.97); }
-</style>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<main>
-  <h1>Notebook</h1>
-  <p>Starter app. Saved count: <b id="count">…</b></p>
-  <button id="add">+1 and save</button>
-</main>
-<script type="module">
-  // Saves go to the app's own server (PUT /api/save), which keeps them in HUB_DATA_DIR: they sync with the stick.
-  // Do not keep saves in localStorage or IndexedDB: browser storage is not synced.
-  const out = document.getElementById('count');
-  let save = await (await fetch('api/save')).json();
-  out.textContent = save.count ?? 0;
-  document.getElementById('add').onclick = async () => {
-    save = { ...save, count: (save.count ?? 0) + 1 };
-    out.textContent = save.count;
-    const r = await fetch('api/save', { method: 'PUT', body: JSON.stringify(save) });
-    if (!r.ok) out.textContent = 'save failed';
-  };
-</script>
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2H19.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="currentColor"/></symbol>
+  <symbol id="i-folder-open" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2H18.5A1.5 1.5 0 0 1 20 8.5V10H7.2a1.5 1.5 0 0 0-1.4 1L3 18.6z M6.6 11.5h15.2l-2.6 7.5H3.9z" fill="currentColor"/></symbol>
+  <symbol id="i-md" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 16v-4.5l1.75 2 1.75-2V16M14.5 11.5v4.3m-1.4-1.4 1.4 1.4 1.4-1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-txt" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 11h6M9 14h6M9 17h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3 22 20H2z" fill="currentColor"/><path d="M12 9v5M12 16.5v.5" stroke="#000" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-note-add" viewBox="0 0 24 24"><path d="M6 3h8l4 4v6M6 3v18h7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M17 15v6M14 18h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder-add" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2H19.5A1.5 1.5 0 0 1 21 8.5V12M3 6.5v11A1.5 1.5 0 0 0 4.5 19H12" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M18 14v6M15 17h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="19" r="1.8" fill="currentColor"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16m0 0-3-3m3 3 3-3M14 6h7M14 11h5M14 16h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<div id="app" class="app">
+  <aside id="explorer" class="explorer" aria-label="Explorer">
+    <header class="ex-head">
+      <span class="ex-title">Explorer</span>
+      <button class="icon-btn" data-act="new-note" title="New note" aria-label="New note"><svg><use href="#i-note-add"/></svg></button>
+      <button class="icon-btn" data-act="new-folder" title="New folder" aria-label="New folder"><svg><use href="#i-folder-add"/></svg></button>
+      <button class="icon-btn" data-act="quick-open" title="Quick open" aria-label="Quick open"><svg><use href="#i-search"/></svg></button>
+      <button class="icon-btn" data-act="sort" title="Sort" aria-label="Sort"><svg><use href="#i-sort"/></svg></button>
+      <button class="icon-btn" data-act="explorer-more" title="More" aria-label="More"><svg><use href="#i-more"/></svg></button>
+    </header>
+    <div class="ex-filter"><input id="filter" type="search" placeholder="Filter by name" autocomplete="off" spellcheck="false" enterkeyhint="search"></div>
+    <div id="selectbar" class="selectbar" hidden>
+      <span id="select-count">0 selected</span>
+      <button data-act="sel-move">Move to…</button>
+      <button data-act="sel-delete">Delete</button>
+      <button data-act="sel-done">Done</button>
+    </div>
+    <div id="tree" class="tree" role="tree" tabindex="0"></div>
+  </aside>
+  <div id="backdrop" class="backdrop" hidden></div>
+
+  <main class="main">
+    <header class="topbar">
+      <button id="drawer-btn" class="icon-btn drawer-btn" aria-label="Explorer"><svg><use href="#i-menu"/></svg></button>
+      <div id="tabs" class="tabs" role="tablist"></div>
+    </header>
+    <div class="subbar">
+      <nav id="crumbs" class="crumbs" aria-label="Path"></nav>
+      <span id="status" class="status"></span>
+      <button id="mode-btn" class="pill" hidden>Preview</button>
+      <button id="note-more" class="icon-btn" aria-label="Note options" hidden><svg><use href="#i-more"/></svg></button>
+    </div>
+    <div id="changed" class="changed" hidden>
+      <span>This note changed somewhere else.</span>
+      <button data-act="theirs">Load theirs</button>
+      <button data-act="mine">Keep mine</button>
+    </div>
+    <section id="editor-wrap" class="editor-wrap">
+      <textarea id="editor" class="editor" spellcheck="true" autocapitalize="sentences" hidden></textarea>
+      <article id="preview" class="preview" hidden></article>
+      <div id="empty" class="empty">
+        <p>No note open.</p>
+        <p class="muted">Open the Explorer to make a folder or a note.</p>
+        <button id="empty-new" class="pill strong">New note</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="ghost" class="ghost" hidden></div>
+<div id="sheet-layer" class="sheet-layer" hidden><div id="sheet" class="sheet" role="dialog" aria-modal="true"></div></div>
+<div id="toast" class="toast" role="status" hidden></div>
+<script type="module" src="js/main.mjs"></script>
 </body>
 </html>
