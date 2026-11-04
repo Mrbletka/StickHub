@@ -23,6 +23,7 @@ syncs with the stick file by file and opens anywhere (any editor, any PC).
   no trailing dot or space, max 200 characters, no two names that differ only in upper/lower case.
   `.part` / `.tmp` endings are not allowed (the hub sync skips them).
 - Limits: a note up to 1 MB, the vault up to 5,000 files.
+- Nothing in the vault is ever imported or run: notes are data (the vault may live on the stick).
 - Writes are atomic (`name.part`, fsync, rename) and unchanged content is never rewritten. That is why the hub may sync
   this app's data while it runs (`atomicData`).
 - UI state (open tabs, open folders, sort, recents) is in localStorage, never in the vault. The fixed port keeps it.

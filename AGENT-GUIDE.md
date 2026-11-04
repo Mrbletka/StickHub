@@ -70,20 +70,26 @@ HUB/                  on the stick
   runtime/            optional portable Node for Windows (later)
   .trash/<date>/      deleted files go here, never hard-deleted
 ~~~
-Two run modes: (1) phone-copy mode (default, fast): run from the clone. (2) stick mode: run straight from the stick.
+Run modes on the phone. In both, the hub and its apps run from the clone: nothing from the stick is ever run or
+imported on the phone.
+(1) Phone copy (default): app data in the clone's data/, synced with the stick.
+(2) Data on the stick (setting `dataOnStick`, default off for now): app data lives on the stick.
+(3) Portable mode (phase 4, not built): a device without the clone runs the code from the stick.
 
-## Stick mode
-- `node hub/cli.mjs open --from-stick`, or the setting `runFromStick: true` for the watcher, starts
-  <stick>/HUB/hub/server.mjs. Apps from HUB/apps, data in HUB/data/<id>/. No sync in this mode: the stick is the live storage.
-- The launcher (hub/stickmode.mjs, runs from the phone clone) starts stick code only if HUB/hub and HUB/apps are exactly a
-  commit the phone's git knows (git blob hashes, no extra files, no links). Otherwise it refuses and lists the differences.
-- Before starting: finish an interrupted sync (HUB/.journal.json), and if HUB/.running.json is still there (the stick was
-  pulled while the hub ran from it) report it and remove leftover *.part files in HUB/data.
-- Same fixed port, token and settings (all in ~/.stickhub on the phone, never on the stick). Logs: logs/hub-stick.log.
-- A running phone-copy hub is stopped first (the port is fixed).
-- The hub checks every 0.5 s that its stick is still there. When it goes: apps get SIGTERM with a 1.2 s grace (all stopped
-  within 2 s), the page shows "Stick removed", the hub exits (its own code is on the stick). A clean stop removes the marker.
-- On a PC (later) there is no git clone to check against: that needs its own trust step (phase 4 design).
+## Data on the stick (dataOnStick)
+- `node hub/cli.mjs open --data-on-stick`, or the setting `dataOnStick: true` (the watcher uses it), starts the hub from
+  the clone with HUB_DATA_DIR = <stick>/HUB/data/<id>/. A hub running the other way is restarted.
+- On the stick: the app data, the code snapshot (backup, copied phone -> stick as before) and the plug-in journal
+  (HUB/.journal.json from an interrupted sync, HUB/.running.json = the data is in use).
+  On the phone: the token and settings (~/.stickhub/), the logs, the watcher. No data sync in this mode.
+- Plug-in (hub/livedata.mjs): finish an interrupted sync; if HUB/.running.json is still there (pulled while in use),
+  report it and remove leftover *.part files in HUB/data; mark the stick as in use; point the apps' data at it.
+- The hub checks every 0.5 s. Stick gone: apps get SIGTERM with a 1.2 s grace (all stopped within 2 s), the page shows
+  "Stick removed", the hub keeps running. Stick back: the screen goes away; apps start again only when tapped.
+- No stick: no app starts; the page shows "Plug in the stick".
+- The byte-for-byte check of code on the stick (hub/portable-check.mjs: git blob hashes, extra-file check, list of
+  differences) is reserved for portable mode. It is not used on the phone.
+
 The hub also works with no stick plugged in. A setting `requireStick` makes it refuse to start without the stick (cartridge feel).
 
 ## App manifest (apps/<id>/app.json)
@@ -102,6 +108,8 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
   server (the starter has GET/PUT /api/save with atomic writes), stop cleanly on SIGTERM, Node built-ins only,
   run alone with `PORT=4100 node server.mjs`.
 - static apps: files only, no saves.
+- Never import or require anything from HUB_DATA_DIR (in the hub or in an app): data is data, never code.
+  It may live on the stick. A test (test/app-rules.test.mjs) checks every app for this.
 - `"port": <number>` = fixed port (never handed to another app): use it when the app keeps UI state in localStorage.
 - `"atomicData": true` only if the app writes data exclusively with temp file + rename: then sync copies its data
   while it runs (no "pending").
@@ -161,8 +169,8 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
 - Sync runs in the background, shows progress and can be cancelled. A cancelled or interrupted run is safe to resume:
   every file write is atomic (.part, fsync, rename), and every step is re-checked by hash on the next run.
 - Everything on the stick is untrusted input: reject "..", absolute paths and odd names, accept only app ids [a-z0-9-],
-  limit file sizes and file counts. Sync never runs or imports code from the stick on the phone.
-  The one exception is stick mode (below), and only after the launcher has checked the code against the phone's git.
+  limit file sizes and file counts. Nothing from the stick is ever run or imported on the phone (also not with
+  dataOnStick: the code always comes from the clone).
 - `stick init` never touches an existing HUB/ or any other file on the stick unless --force is passed.
 
 ## Watcher (phone only, hub/watcher.mjs, runs in Termux)
@@ -184,7 +192,8 @@ A finished phase is recorded here with its commit hash (no git tags).
    **Done: b306b14** (tested on the phone and the real stick 2026-11-04, unplug mid-sync included; docs/PROBES.md run 3).
 3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
    **Done: f8da240** (tested on the phone 2026-11-04: plug in -> open and logged in 6.6 s, as the installed app; docs/PROBES.md run 4).
-4. Windows launcher + portable Node: **design only, later**. Not now.
+4. Windows launcher + portable Node: **design only, later**. Not now. Portable mode runs code from the stick and must use
+   hub/portable-check.mjs first.
 
 Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` (see "Making apps").
 - App #1 Notebook (apps/notebook): notes as plain files in HUB_DATA_DIR/vault, VS Code-style Explorer. See its README.

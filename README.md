@@ -30,13 +30,13 @@ Settings (optional) in `~/.stickhub/settings.json`: `{ "requireStick": false, "a
 - A broken app shows "Broken" on its tile; long-press it to see why.
 - Tap the chip at the top: stick status, sync progress, Sync now, Cancel, conflicts.
 
-## Stick mode (run from the stick)
+## App data on the stick
 ```sh
-node hub/cli.mjs open --from-stick     # or { "runFromStick": true } in ~/.stickhub/settings.json for the watcher
+node hub/cli.mjs open --data-on-stick   # or { "dataOnStick": true } in ~/.stickhub/settings.json (default off)
 ```
-The hub and its apps run from `HUB/` on the stick and save into `HUB/data/`: no sync needed. It starts only if the
-code on the stick is exactly a commit of this phone's git (copy it with `node hub/cli.mjs sync run code`).
-Pull the stick and the apps stop within 2 s, the page shows "Stick removed". Phone-copy mode stays the default.
+The hub and its apps still run from the clone; only the app data (`HUB_DATA_DIR`) lives on the stick in
+`HUB/data/<id>/`, so no data sync is needed. Pull the stick and the apps stop within 2 s, the page shows
+"Stick removed", the hub keeps running; plug it back in and carry on. No stick: "Plug in the stick".
 
 ## Stick and sync
 ```sh
