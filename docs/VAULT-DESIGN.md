@@ -550,6 +550,29 @@ the stick is plugged in.
   verify and export keep working. Open refuses more than 256.
 - Pulled out mid-compaction: the new pack is garbage, the old packs are still referenced. Nothing is lost.
 
+**Maintenance in small steps (job 2b).** On the stick a deleted file costs about 55 ms, and run 10 showed a save
+waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, and a save waits for at most one step:
+- **Capped cleanup runs.** One run deletes at most `cleanupMax` files (default 10) and says `more: true` when work is
+  left. The order is unchanged: index `.part` files, valid index files beyond the 2 newest, unused packs, header
+  `.part` files, and the header backup completion last (it counts as one unit of the cap). Every run starts with its
+  own scan and the same checks as before; nothing is carried from one run to the next.
+- **Bounded compaction.** One call reads at most `maxPacks` packs (default 12) and at most `maxBytes` live bytes
+  (16 MiB), and makes one commit.
+- **Steps.** A step is one unit of work: a due trash purge (one commit), one compaction call, or one capped cleanup
+  run. `maintain()` and `cleanup()` still finish the job for their caller and return one merged result (counts
+  summed, plus `steps`), but each step is its own item in the write queue, queued only after the previous step
+  finished. Saves that arrive meanwhile are already in the queue, so they go first. A chain ends when nothing is
+  left, or when a run is blocked, busy (reads in progress) or fails. It never spins: compaction steps continue only
+  while the number of candidates or their dead bytes goes down, and every chain stops after 50,000 steps.
+- **Automatic maintenance.** The same triggers (the first commit of a session, then every `autoCleanupEvery`
+  commits, now 4 by default) queue one step at the tail; a step that leaves work queues the next step at the tail.
+  Only one automatic chain runs at a time. Its errors go to `status().lastCleanup`, never to a save.
+- **close()** waits for the step that is running and for everything callers queued (saves, explicit tasks).
+  Automatic steps that have not started are dropped, a running one queues no successor, and an explicit `maintain()`
+  or `cleanup()` stops after its current step. So `close()` takes at most about one step.
+- **The 200-file guard** runs one capped cleanup run inside the commit, then refuses if still at the limit.
+- **Unfinished header writes** (`#dirty`) are cleared only by a full run that ended with `more: false`.
+
 ## 9. Speed: plug-in to open in 10 s or less
 "Open" = the hub page shows the tiles, unlocked.
 | Step | Measured today | With the vault |
