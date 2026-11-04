@@ -595,6 +595,11 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
 - **close()** waits for the step that is running and for everything callers queued (saves, explicit tasks).
   Automatic steps that have not started are dropped, a running one queues no successor, and an explicit `maintain()`
   or `cleanup()` stops after its current step. So `close()` takes at most about one step.
+- **A failed compaction step** (job 3a step 0; for example a damaged pack among the chosen ones gives `BAD_VX`) is
+  recorded in `status().lastCleanup.error`, and the chain goes on to its cleanup phase (at least one run), so index
+  files cannot pile up to the 200-file guard. An explicit `maintain()` does not throw then: it returns
+  `compacted: {done: false, reason: 'failed', error: <code>, ...}` and the merged `cleanup` result. A failed write
+  (`WRITE_FAILED`), a broken or closed store still end the chain with the error.
 - **The 200-file guard** runs one capped cleanup run inside the commit, then refuses if still at the limit.
 - **Unfinished header writes** (`#dirty`) are cleared only by a full run that ended with `more: false`.
 - **Index cache (job 2c).** Run 11 showed the repeated scans doubling the total work of a big backlog (21.6 s

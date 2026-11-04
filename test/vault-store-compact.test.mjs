@@ -2,7 +2,7 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { openVaultFolder } from '../hub/vault/store.mjs';
@@ -159,4 +159,23 @@ test('one compaction call reads at most maxPacks packs (default 12) in one commi
   assert.ok(s.status().packs <= 3, `${s.status().packs} live packs`);
   for (let i = 0; i < 40; i++) assert.equal((await s.read(`n/${i}.md`)).toString(), `note ${i}`);
   assert.equal((await s.verify()).ok, true);
+});
+
+test('a damaged pack chosen for compaction: the chains still clean up, saves go on, the error is recorded', async () => {
+  const t = await fresh(); // automatic maintenance on (every 4 commits)
+  const s = t.store;
+  await s.write('d/bad.md', 'in the pack that gets damaged');
+  const [pack] = readdirSync(join(t.dir, '_packs'));
+  const f = readFileSync(join(t.dir, '_packs', pack));
+  f[200] ^= 1; // in place, same size: its segment no longer authenticates
+  writeFileSync(join(t.dir, '_packs', pack), f);
+  for (let i = 0; i < 120; i++) await s.write(`n/${i % 5}.md`, `version ${i}`); // tier 0 fills: compaction picks the bad pack
+  while (s.status().maintaining) await new Promise((r) => setImmediate(r));
+  const idx = readdirSync(join(t.dir, '_index')).length;
+  assert.ok(idx < 40, `${idx} index files`);
+  assert.equal(s.status().lastCleanup.error, 'BAD_VX');
+  const m = await s.maintain(); // explicit: no throw; compaction reports the failure, the cleanup still runs
+  assert.deepEqual([m.compacted.done, m.compacted.reason, m.compacted.error], [false, 'failed', 'BAD_VX']);
+  assert.ok(m.cleanup);
+  assert.equal((await s.read('n/4.md')).toString(), 'version 119');
 });

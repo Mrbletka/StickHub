@@ -7,6 +7,7 @@
 // go down; cleanup steps do at most as much work as the chain's first cleanup run saw (saves that arrive all the
 // time make new leftovers: the next maintenance takes them); and a chain stops after MAX_STEPS steps.
 
+import { VaultError } from './errors.mjs';
 import { planCompaction } from './compact.mjs';
 import { noRemovals } from './cleanup.mjs';
 
@@ -44,6 +45,7 @@ function mergeCompaction(acc, r) {
     c.bytes += r.bytes;
   } else {
     c.reason = r.reason;
+    if (r.error) c.error = r.error;
   }
   return c;
 }
@@ -88,10 +90,18 @@ export async function step(chain, io) {
     const progress = plan && (!chain.lastPlan || plan.livePacks < chain.lastPlan.livePacks || plan.dead < chain.lastPlan.dead);
     if (progress) {
       chain.lastPlan = plan;
-      const r = await io.compact();
+      let r;
+      try {
+        r = await io.compact();
+      } catch (e) { // e.g. a damaged pack: note it, skip compaction, still clean up (a failed write stops the chain)
+        if (!(e instanceof VaultError) || ['WRITE_FAILED', 'STORE_BROKEN', 'CLOSED'].includes(e.code)) throw e;
+        chain.failed = e;
+        r = { done: false, reason: 'failed', error: e.code };
+      }
       chain.out.compacted = mergeCompaction(chain.out.compacted, r);
       count();
       if (r.done) return true;
+      if (r.error) { chain.phase = 'cleanup'; chain.started = true; return true; } // the cleanup phase runs once at least
     }
     chain.phase = 'cleanup';
   }
@@ -134,6 +144,7 @@ export class Maintenance {
     if (this.#auto && this.#queue.dropBackground()) this.#auto = null; // its next step had not started
     try {
       while (await this.#queue.task(() => step(chain, this.#io())));
+      if (chain.failed) this.#onError(chain.failed); // recorded in status().lastCleanup as well
       return chain.out;
     } finally {
       this.#explicit--;
@@ -151,7 +162,9 @@ export class Maintenance {
     const chain = this.#auto;
     this.#queue.background(async () => {
       const more = await step(chain, this.#io());
-      if (more && !this.#explicit && !this.#io().closing()) this.#next(); else this.#auto = null;
+      if (more && !this.#explicit && !this.#io().closing()) return this.#next();
+      this.#auto = null;
+      if (chain.failed) this.#onError(chain.failed);
     }, (e) => { this.#auto = null; this.#onError(e); });
   }
 }
