@@ -1,7 +1,9 @@
-// StickHub UI. Vanilla JS: state comes from /api/events (SSE), actions are POSTs to /api/apps/<id>/...
-// Tap a tile = start (if needed) and open. Long-press (or right-click) = menu.
+// StickHub UI. Vanilla JS: state comes from /api/events (read with fetch), actions are POSTs with the token.
+// Tap a tile = start (if needed) and open it in the player. Long-press (or right-click) = menu.
 
 import { chipFor, fillStickSheet, esc } from './stick.js';
+import { api, openStream, loginFromUrl, getToken, LoginNeeded } from './api.js';
+import { createPlayer } from './player.js';
 
 const $ = (sel) => document.querySelector(sel);
 const grid = $('#grid');
@@ -15,6 +17,8 @@ const apps = new Map();
 let menuId = null;
 let hubStatus = null;
 let events = null;
+let logsFor = null;
+const player = createPlayer({ root: $('#player'), onClose: () => render() });
 const LONG_PRESS_MS = 450;
 
 
@@ -85,11 +89,10 @@ function fillMenu(app) {
 // ---------- actions ----------
 
 async function post(id, action) {
-  const res = await fetch(`/api/apps/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
-  const body = await res.json().catch(() => ({}));
+  const { ok, status, body } = await api(`/api/apps/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
   if (body.app || body.id) apps.set(id, body.app || body);
   render();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  if (!ok) throw new Error(body.error || `HTTP ${status}`);
   return body;
 }
 
@@ -99,8 +102,9 @@ async function openApp(id) {
   if (app.problems.length) { showMenu(id); return; }
   try {
     const view = app.status === 'running' ? app : await post(id, 'start');
-    location.assign(view.url);
+    player.open(view);
   } catch (e) {
+    if (e instanceof LoginNeeded) return showLocked();
     toast(`${app.name} did not start: ${e.message}`);
   }
 }
@@ -111,7 +115,7 @@ async function act(action) {
   if (action === 'close') return menu.close();
   if (action === 'open') { menu.close(); return openApp(id); }
   if (action === 'logs') { menu.close(); return showLogs(id); }
-  try { await post(id, action); } catch (e) { toast(e.message); }
+  try { await post(id, action); } catch (e) { if (e instanceof LoginNeeded) showLocked(); else toast(e.message); }
 }
 
 function showMenu(id) {
@@ -143,24 +147,49 @@ function addLogLine(entry) {
 
 // ---------- server events ----------
 
-function connect(logsFor = null) {
+function connect(forApp = null) {
   events?.close();
-  events = new EventSource(logsFor ? `/api/events?logs=${encodeURIComponent(logsFor)}` : '/api/events');
-  events.addEventListener('apps', (e) => {
-    apps.clear();
-    for (const a of JSON.parse(e.data)) apps.set(a.id, a);
-    render();
+  logsFor = forApp;
+  events = openStream(forApp ? `/api/events?logs=${encodeURIComponent(forApp)}` : '/api/events', onEvent, (state) => {
+    if (state === 'login') showLocked();
+    else if (state === 'down') { chip.textContent = 'Hub not reachable'; chip.className = 'chip bad'; }
   });
-  events.addEventListener('app', (e) => { const a = JSON.parse(e.data); apps.set(a.id, a); render(); });
-  events.addEventListener('status', (e) => {
+}
+
+function onEvent(name, data) {
+  if (name === 'apps') {
+    apps.clear();
+    for (const a of data) apps.set(a.id, a);
+    render();
+  } else if (name === 'app') {
+    apps.set(data.id, data);
+    // The app on screen stopped (crash, Stop from elsewhere): leave the player and say why.
+    if (player.current === data.id && data.status !== 'running' && data.status !== 'stopping') {
+      player.goHome();
+      toast(`${data.name} stopped${data.error ? `: ${data.error}` : '.'}`);
+    }
+    render();
+  } else if (name === 'status') {
     const prev = hubStatus?.stick?.state;
-    hubStatus = JSON.parse(e.data);
+    hubStatus = data;
     if (prev && prev !== 'connected' && hubStatus.stick?.state === 'connected') flashChip();
     render();
     if (stickSheet.open) fillStickSheet($, hubStatus.stick);
-  });
-  events.addEventListener('log', (e) => { const l = JSON.parse(e.data); if (logs.open && l.id === logsFor) addLogLine(l); });
-  events.onerror = () => { chip.textContent = 'Hub not reachable'; chip.className = 'chip bad'; };
+  } else if (name === 'log') {
+    if (logs.open && data.id === logsFor) addLogLine(data);
+  }
+}
+
+function showLocked(message) {
+  events?.close();
+  events = null;
+  player.close();
+  for (const d of [menu, logs, stickSheet]) if (d.open) d.close();
+  $('#locked').hidden = false;
+  $('#app-main').hidden = true;
+  chip.textContent = 'Locked';
+  chip.className = 'chip warn';
+  if (message) $('#locked-error').textContent = message;
 }
 
 function setChip(status) {
@@ -180,8 +209,12 @@ function flashChip() {
 
 async function stickAction(act) {
   if (act === 'close') return stickSheet.close();
-  const res = await fetch(act === 'sync' ? '/api/sync' : '/api/sync/cancel', { method: 'POST' });
-  if (!res.ok) toast((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+  try {
+    const { ok, status, body } = await api(act === 'sync' ? '/api/sync' : '/api/sync/cancel', { method: 'POST' });
+    if (!ok) toast(body.error || `HTTP ${status}`);
+  } catch (e) {
+    if (e instanceof LoginNeeded) showLocked(); else throw e;
+  }
 }
 
 // ---------- press handling: tap vs long-press, touch and mouse ----------
@@ -231,6 +264,7 @@ closeOnBackdrop(logs);
 closeOnBackdrop(stickSheet);
 
 chip.addEventListener('click', () => {
+  if (!getToken()) return;
   fillStickSheet($, hubStatus?.stick);
   stickSheet.showModal();
 });
@@ -250,6 +284,12 @@ logs.addEventListener('click', (e) => {
 logs.addEventListener('close', () => connect()); // back to the stream without logs
 $('#toast').addEventListener('click', () => { $('#toast').hidden = true; });
 
-// Coming back from an app (back gesture) may restore this page from the bfcache: reconnect.
-window.addEventListener('pageshow', (e) => { if (e.persisted) connect(); });
-connect();
+// Coming back to the page from the bfcache: reconnect.
+window.addEventListener('pageshow', (e) => { if (e.persisted && getToken()) connect(); });
+
+async function start() {
+  const error = await loginFromUrl().catch((e) => e.message);
+  if (!getToken()) return showLocked(error);
+  connect();
+}
+start();

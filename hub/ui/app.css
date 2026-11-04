@@ -123,3 +123,21 @@ code { font-family: ui-monospace, monospace; color: var(--warn); }
 .info li.bad { color: #ffd9d6; background: #1d0b0a; }
 .info code { font-size: 13px; }
 #stick { overflow-y: auto; }
+
+/* Locked (no login yet) */
+.locked { max-width: 520px; margin: 12vh auto 0; text-align: center; }
+.locked h2 { font-size: 22px; }
+.locked pre { background: #111; border: 1px solid var(--line); border-radius: 12px; padding: 14px; color: var(--warn); white-space: pre-wrap; overflow-wrap: anywhere; }
+.error-text { color: var(--bad); min-height: 1.4em; }
+
+/* Player: the app full screen with a floating Home button */
+.player { position: fixed; inset: 0; z-index: 20; background: #000; }
+.player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+.player .home {
+  position: absolute; left: calc(var(--safe-left) + 10px); top: calc(var(--safe-top) + 10px);
+  width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, .25);
+  background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; opacity: .55;
+  touch-action: none; cursor: pointer; z-index: 1; -webkit-tap-highlight-color: transparent;
+}
+.player .home:active { opacity: 1; }
+body.playing { overflow: hidden; }

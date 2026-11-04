@@ -15,10 +15,24 @@
   <button id="chip" class="chip" type="button" aria-live="polite">Connecting…</button>
 </header>
 
-<main>
+<main id="app-main">
   <div id="grid" class="grid" aria-live="polite"></div>
   <p id="empty" class="empty" hidden>No apps yet. Add a folder with an <code>app.json</code> to <code>apps/</code>.</p>
 </main>
+
+<section id="locked" class="locked" hidden>
+  <h2>Log in to StickHub</h2>
+  <p>Open the hub with a login link. In Termux run:</p>
+  <pre>cd ~/StickHub && node hub/cli.mjs login --open</pre>
+  <p class="muted">Plugging in the stick (with the watcher running) also opens a login link.</p>
+  <p id="locked-error" class="error-text"></p>
+</section>
+
+<section id="player" class="player" hidden>
+  <button class="home" type="button" aria-label="Home">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 11 12 3l9 8v10h-6v-6H9v6H3z" fill="currentColor"/></svg>
+  </button>
+</section>
 
 <dialog id="menu" class="sheet">
   <div class="sheet-head">
