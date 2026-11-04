@@ -287,6 +287,11 @@ $('#toast').addEventListener('click', () => { $('#toast').hidden = true; });
 // Coming back to the page from the bfcache: reconnect.
 window.addEventListener('pageshow', (e) => { if (e.persisted && getToken()) connect(); });
 
+// Installable app + offline page. Works on http://127.0.0.1 (counts as a secure origin).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch((e) => console.warn(`service worker: ${e.message}`));
+}
+
 async function start() {
   const error = await loginFromUrl().catch((e) => e.message);
   if (!getToken()) return showLocked(error);
