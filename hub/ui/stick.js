@@ -12,14 +12,18 @@ const RESULT = {
  * Chip text and style for the top bar.
  * @param {object} st  stick status from the server
  * @param {number} running  running apps
+ * @param {{on: boolean, attached?: boolean, removed?: boolean}} [live]  data on the stick
  * @returns {{text: string, cls: string}} cls: '' | 'ok' | 'warn' | 'bad'
  */
-export function chipFor(st, running) {
+export function chipFor(st, running, live) {
   const pre = running ? `${running} running · ` : '';
+  if (live?.on) {
+    if (live.attached) return { text: `${pre}Data on the stick`, cls: 'ok' };
+    return live.removed ? { text: 'Stick removed', cls: 'bad' } : { text: 'Plug in the stick', cls: 'warn' };
+  }
   if (!st || st.state === 'none') return { text: `${pre}No stick`, cls: '' };
   if (st.state === 'blank') return { text: `${pre}Stick has no HUB`, cls: 'warn' };
   if (st.state === 'bad') return { text: `${pre}Stick problem`, cls: 'bad' };
-  if (st.portable) return { text: `${pre}Running from the stick`, cls: 'ok' };
   if (st.sync?.running) return { text: `${pre}Syncing ${st.sync.done || 0}/${st.sync.total || '…'}`, cls: 'ok' };
   if (st.last && st.last.result !== 'ok') return { text: `${pre}Sync not finished`, cls: 'warn' };
   if (st.conflicts?.length) return { text: `${pre}${st.conflicts.length} conflict${st.conflicts.length > 1 ? 's' : ''}`, cls: 'warn' };

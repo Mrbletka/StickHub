@@ -11,7 +11,6 @@ import { createGit } from './platform/git.mjs';
 import { findStick } from './stick.mjs';
 import { createFsx } from './sync/fsx.mjs';
 import { ensureHub, loginUrl } from './hubctl.mjs';
-import { startStickHub } from './stickmode.mjs';
 import { stickhubHome, loadSettings } from './config.mjs';
 import { readCmdline, sameArgv } from './proc.mjs';
 
@@ -22,8 +21,8 @@ const PLAIN_PATH = /^[\w./-]+$/;
 
 /**
  * The watcher's logic, with every outside effect passed in (tests use fakes).
- * @param {{listVolumes: Function, ensureHub: Function, ensureStickHub?: (s: object) => Promise<{already: boolean}>,
- *   loginUrl: Function, openUrl: Function, notify: Function, settings: () => Promise<{autoPull: boolean, runFromStick: boolean}>,
+ * @param {{listVolumes: Function, ensureHub: (o: {dataOnStick: boolean}) => Promise<{started: boolean}>,
+ *   loginUrl: Function, openUrl: Function, notify: Function, settings: () => Promise<{autoPull: boolean, dataOnStick: boolean}>,
  *   pull?: Function, log: (msg: string) => void, loginAction?: string|null}} d
  */
 export class Watcher {
@@ -62,13 +61,9 @@ export class Watcher {
       const r = await this.d.pull();
       this.d.log(`autoPull: ${r}`);
     }
-    if (settings.runFromStick && this.d.ensureStickHub) {
-      const r = await this.d.ensureStickHub(s);
-      this.d.log(r.already ? 'hub already runs from the stick' : `hub started from the stick (${Date.now() - t0} ms)`);
-    } else {
-      const hub = await this.d.ensureHub();
-      this.d.log(hub.started ? `hub started (${Date.now() - t0} ms)` : 'hub was already running');
-    }
+    const hub = await this.d.ensureHub({ dataOnStick: settings.dataOnStick === true });
+    const where = settings.dataOnStick ? ', app data on the stick' : '';
+    this.d.log(hub.started ? `hub started (${Date.now() - t0} ms${where})` : `hub was already running${where}`);
     const url = await this.d.loginUrl();
     const r = await this.d.openUrl(url);
     if (r.ok) {
@@ -112,8 +107,7 @@ async function main() {
   const git = createGit(ROOT);
   const watcher = new Watcher({
     listVolumes: realListVolumes, openUrl, notify, log, loginAction,
-    ensureHub: () => ensureHub(ROOT),
-    ensureStickHub: (s) => startStickHub({ root: ROOT, home, mount: s.mount, git, fsx: createFsx(), log: (m) => log(`stick mode: ${m}`) }),
+    ensureHub: (o) => ensureHub(ROOT, undefined, { ...o, home }),
     loginUrl: () => loginUrl(home),
     settings: () => loadSettings(home),
     pull: () => git.pullFastForward(),

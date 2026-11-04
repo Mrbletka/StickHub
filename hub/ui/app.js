@@ -172,7 +172,7 @@ function onEvent(name, data) {
   } else if (name === 'status') {
     const prev = hubStatus?.stick?.state;
     hubStatus = data;
-    if (data.removed) showRemoved();
+    showLive(data.live);
     if (prev && prev !== 'connected' && hubStatus.stick?.state === 'connected') flashChip();
     render();
     if (stickSheet.open) fillStickSheet($, hubStatus.stick);
@@ -181,15 +181,18 @@ function onEvent(name, data) {
   }
 }
 
-// Stick mode: the stick was pulled out. The hub stops right after this, so this screen stays until a reload.
-function showRemoved() {
+// Data on the stick: without the stick no app can run. "Stick removed" after a pull, "Plug in the stick" before
+// the first plug-in. The hub keeps running, so this screen goes away by itself when the stick is back.
+function showLive(live) {
+  const show = !!live?.on && !live.attached;
+  $('#removed').hidden = !show;
+  if (!show) return;
   player.close();
   for (const d of [menu, logs, stickSheet]) if (d.open) d.close();
-  events?.close();
-  events = null;
-  $('#removed').hidden = false;
-  chip.textContent = 'Stick removed';
-  chip.className = 'chip bad';
+  $('#removed-title').textContent = live.removed ? 'Stick removed' : 'Plug in the stick';
+  $('#removed-text').textContent = live.removed
+    ? 'Your app data is on the stick, so the apps were stopped. Apps save in one step (temp file, then rename), so no file is left half written.'
+    : 'Your app data is on the stick. Plug it in to start your apps.';
 }
 
 function showLocked(message) {
@@ -206,7 +209,7 @@ function showLocked(message) {
 
 function setChip(status) {
   const running = [...apps.values()].filter((a) => a.status === 'running').length;
-  const { text, cls } = chipFor(status.stick, running);
+  const { text, cls } = chipFor(status.stick, running, status.live);
   chip.textContent = text;
   chip.className = `chip ${cls}${chip.classList.contains('flash') ? ' flash' : ''}`;
 }

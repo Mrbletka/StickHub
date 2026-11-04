@@ -72,10 +72,10 @@ export function openLog(logsDir, name) {
  * @param {string} script  e.g. "hub/server.mjs"
  * @param {string} log  e.g. "hub.log"
  */
-export function startDetached(root, script, log) {
+export function startDetached(root, script, log, env = {}) {
   const fd = openLog(join(root, 'logs'), log);
   try {
-    const child = spawn(process.execPath, [join(root, script)], { cwd: root, detached: true, stdio: ['ignore', fd, fd] });
+    const child = spawn(process.execPath, [join(root, script)], { cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...env } });
     child.unref();
     return child;
   } finally {
@@ -88,17 +88,29 @@ function lastLine(file) {
   try { return readFileSync(file, 'utf8').trim().split('\n').pop() || ''; } catch { return ''; }
 }
 
-/** Start the hub in the background if it is not running; wait until it answers (max ~10 s). */
-export async function ensureHub(root, port = HUB_PORT) {
-  if (await hubRunning(port)) return { started: false };
-  const child = startDetached(root, 'hub/server.mjs', 'hub.log');
+/**
+ * Start the hub in the background if it is not running; wait until it answers (max ~10 s).
+ * @param {{dataOnStick?: boolean, home?: string}} [o]  dataOnStick: app data on the stick (a hub running the
+ *   other way is restarted); home: ~/.stickhub (for the token to stop it)
+ */
+export async function ensureHub(root, port = HUB_PORT, o = {}) {
+  const ping = await callHub('/api/ping', { port, timeout: 1500 });
+  if (ping?.status === 200 && ping.body?.name === 'StickHub') {
+    if (!o.dataOnStick || ping.body.mode === 'data-on-stick') return { started: false, mode: ping.body.mode };
+    // Running with app data on the phone, but data on the stick is wanted: restart (apps stop cleanly first).
+    await stopHub(o.home, port);
+    const end = Date.now() + 10_000;
+    while (Date.now() < end && (await hubRunning(port))) await new Promise((r) => setTimeout(r, 200));
+    if (await hubRunning(port)) throw new Error('The running hub did not stop. Try: node hub/cli.mjs hub stop');
+  }
+  const child = startDetached(root, 'hub/server.mjs', 'hub.log', o.dataOnStick ? { STICKHUB_DATA_ON_STICK: '1' } : {});
   let exited = null;
   child.once('exit', (code) => { exited = code; });
   const end = Date.now() + 10_000;
   while (Date.now() < end) {
     await new Promise((r) => setTimeout(r, 200));
     if (exited !== null) throw new Error(`The hub stopped at once: ${lastLine(join(root, 'logs', 'hub.log'))}`);
-    if (await hubRunning(port)) return { started: true, pid: child.pid };
+    if (await hubRunning(port)) return { started: true, pid: child.pid, mode: o.dataOnStick ? 'data-on-stick' : 'phone' };
   }
   throw new Error('The hub did not start within 10 s. See logs/hub.log');
 }

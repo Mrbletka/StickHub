@@ -20,7 +20,8 @@ export class StickService extends EventEmitter {
    */
   constructor(o) {
     super();
-    this.o = { pollMs: 2000, autoSync: true, listVolumes: realListVolumes, ...o };
+    // ?? and not a spread: an option passed as undefined must not wipe out the default.
+    this.o = { ...o, pollMs: o.pollMs ?? 2000, autoSync: o.autoSync ?? true, listVolumes: o.listVolumes || realListVolumes };
     this.git = o.git || createGit(o.root);
     this.stick = { state: 'none' };
     this.key = 'none';
@@ -103,6 +104,8 @@ export class StickService extends EventEmitter {
    */
   syncNow(what = 'all') {
     if (this.stick.state !== 'ok' || this.#portable()) return false;
+    // Data on the stick: the stick is the live storage, so only the code backup is copied.
+    if (this.o.dataSync === false) { if (what === 'data') return false; what = 'code'; }
     if (this.run) { this.again = this.again === 'all' || what === 'all' ? 'all' : what; return true; }
     this.runDone = this.#runOnce(what);
     return true;
@@ -153,6 +156,7 @@ export class StickService extends EventEmitter {
 
   // An app stopped: its data may have changed, so sync data shortly after (several stops = one sync).
   #appChanged(view) {
+    if (this.o.dataSync === false) return;
     const prev = this.prevStatus.get(view.id);
     this.prevStatus.set(view.id, view.status);
     const stopped = (prev === 'running' || prev === 'stopping') && (view.status === 'stopped' || view.status === 'error');

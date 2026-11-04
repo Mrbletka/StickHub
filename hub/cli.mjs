@@ -5,7 +5,7 @@
 //   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
 //   node hub/cli.mjs login [--open]      fresh one-time login link (if the hub page says "Log in")
-//   node hub/cli.mjs open [--from-stick] start the hub if needed and open it (--from-stick: stick mode)
+//   node hub/cli.mjs open [--data-on-stick]   start the hub if needed and open it (app data on the stick)
 //   node hub/cli.mjs hub stop            stop the hub and its apps
 //   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
@@ -19,13 +19,12 @@ import { createFsx } from './sync/fsx.mjs';
 import { findStick, readStick, initStick } from './stick.mjs';
 import { SyncRun } from './sync/runner.mjs';
 import { pullCode } from './sync/pull-code.mjs';
-import { deviceId, stickhubHome } from './config.mjs';
+import { deviceId, stickhubHome, loadSettings } from './config.mjs';
 import { readToken } from './auth.mjs';
 import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs';
 import { openUrl } from './platform/termux.mjs';
 import { watchCommand, widgetInstall } from './cli-watch.mjs';
 import { createApp } from './scaffold.mjs';
-import { startStickHub } from './stickmode.mjs';
 import { loadApp } from './apps.mjs';
 import { loadEngines } from './engines.mjs';
 
@@ -37,7 +36,7 @@ const USAGE = `Usage:
   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
   node hub/cli.mjs login [--open]
-  node hub/cli.mjs open [--from-stick]
+  node hub/cli.mjs open [--data-on-stick]
   node hub/cli.mjs hub stop
   node hub/cli.mjs watch start|stop|status
   node hub/cli.mjs widget install
@@ -50,7 +49,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
-    else if (a === '--from-stick') flags.fromStick = true;
+    else if (a === '--data-on-stick') flags.dataOnStick = true;
     else if (a === '--name' || a === '--mount' || a === '--engine') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
@@ -184,17 +183,12 @@ async function login(flags) {
   return 0;
 }
 
-/** Start the hub in the background if needed (from the stick with --from-stick), then open it with a login link. */
+/** Start the hub in the background if needed, then open it with a login link. */
 async function open(flags) {
-  if (flags.fromStick) {
-    const s = await pickStick(flags);
-    const r = await startStickHub({ root: ROOT, home: stickhubHome(), mount: s.mount, git: createGit(ROOT), fsx: createFsx() });
-    for (const st of r.steps) console.log(st);
-    if (!r.already) console.log(`Hub running from the stick (pid ${r.pid}, log: logs/hub-stick.log). Pull the stick and it stops its apps.`);
-  } else {
-    const r = await ensureHub(ROOT);
-    if (r.started) console.log(`Started the hub (pid ${r.pid}, log: logs/hub.log).`);
-  }
+  const dataOnStick = flags.dataOnStick || (await loadSettings()).dataOnStick;
+  const r = await ensureHub(ROOT, undefined, { dataOnStick, home: stickhubHome() });
+  if (r.started) console.log(`Started the hub (pid ${r.pid}${dataOnStick ? ', app data on the stick' : ''}, log: logs/hub.log).`);
+  else if (r.mode === 'data-on-stick') console.log('The hub runs with the app data on the stick.');
   return login({ open: true });
 }
 

@@ -84,6 +84,12 @@ export class ProcessManager extends EventEmitter {
     return new Set([...this.apps.keys()].filter((id) => this.isActive(id) && this.apps.get(id).manifest?.atomicData !== true));
   }
 
+  /**
+   * Where app data lives: data/<id> under this folder. null = nowhere right now (data on the stick, stick not
+   * plugged in): no app may start.
+   */
+  setDataDir(dir) { this.dataDir = dir; }
+
   /** True while an app is starting, running or stopping. */
   isActive(id) {
     const s = this.state.get(id)?.status;
@@ -103,6 +109,8 @@ export class ProcessManager extends EventEmitter {
       if (!app.manifest) throw new Error(`App "${id}" has problems: ${app.errors.join('; ')}`);
       const engine = this.engines.get(app.manifest.engine);
       if (!engine) throw new Error(`Engine "${app.manifest.engine}" is not installed`);
+      // Data on the stick and no stick: refuse without marking the app as failed.
+      if (!this.dataDir) throw new Error('Plug in the stick: the app data is on it.');
 
       this.#set(id, { status: 'starting', error: null });
       try {
