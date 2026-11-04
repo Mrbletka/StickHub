@@ -486,8 +486,8 @@ pack and one index (group commit). The header is the only file changed in place:
 | Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
 | Cleanup | - | about 40-55 ms per removed file (29 index files: 1.2 s) |
 | maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10, one big task) |
-| the same, in steps (job 2b) | - | pending: probe 10 run 11 (total time, steps, the wait of a save behind it; target < 1.5 s) |
-| steady state: 100 saves, automatic maintenance on | - | pending: probe 10 run 11 (median, p95, max of a save; target max < 1.5 s) |
+| the same, in steps (job 2b) | - | 21.6 s in 29 steps; a save behind it waited 553 ms (run 11; target < 1.5 s met) |
+| steady state: 100 saves, automatic maintenance on | - | median 390 ms, p95 1610 ms, max 1702 ms (run 11; target max < 1.5 s missed) |
 Run 10 showed a save waiting behind the whole maintain() task. Job 2b cuts maintenance into steps (8.6): a save
 waits for at most one step, about 10 deleted files (0.55 s on the stick) or one compaction call.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
@@ -584,8 +584,11 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
   (say 100 index files) that scan is repeated in each step. A scan cached between runs would be cheaper, but it
   would carry state from one run to the next; not built. Open: below 1 MiB of live data the merged pack stays a
   compaction candidate (live packs under 1 MiB), so in a small vault each automatic chain with 4 new small packs
-  rewrites all live data (about 210 ms for 500 KiB and 234 notes on a fast disk). Probe 10 run 11 shows whether
-  that matters on the stick; if it does, merge only packs of similar size (not built).
+  rewrites all live data (about 210 ms for 500 KiB and 234 notes on a fast disk). Run 11: it does matter. These
+  compaction steps are the slow saves of the steady state (max 1.7 s on the stick, 2.4 s on the phone), and the
+  repeated scans double the total work of a big backlog (21.6 s instead of 10.0 s). Fix ideas, not built: merge only
+  packs of similar size, read only the moving pieces instead of whole files, scan only index files that are new
+  since the last run.
 
 ## 9. Speed: plug-in to open in 10 s or less
 "Open" = the hub page shows the tiles, unlocked.

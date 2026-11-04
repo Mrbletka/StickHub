@@ -236,3 +236,28 @@ waits behind the whole maintenance task. This run let 100 saves pile up on purpo
 it on (every 16 commits) a run removes about 15 index + 15 pack files, about 1.7 s of waiting on the stick. Still a
 stall a user can feel: see the note in docs/VAULT-DESIGN.md 8.3.
 
+
+## Run 11 - 2026-11-04: probe 10 with maintenance in small steps (code 78d170c, job 2b)
+`node --test` passed first. The steps of runs 9 and 10 gave about the same numbers (one stick save median 228 ms,
+p95 242 ms; burst of 50 in one commit 234 ms; open with 230 notes 32 ms; cleanup of 29 index files 1.4 s in 3 steps).
+New:
+| Step | Stick (exFAT) | Phone (control) |
+|---|---|---|
+| worst case: maintain() after 100 piled-up saves (automatic off) | 21.6 s in 29 steps: 58 packs into 5, 105 index + 128 pack files removed | 6.5 s, the same work |
+| one save started right behind maintain() (100 more saves before) | **553 ms** (target < 1.5 s; run 10: 13.6 s); maintain 19.6 s, 23 steps | 168 ms |
+| steady: 100 saves over 20 notes, automatic on (every 4 commits) | median 390 ms, p95 **1610 ms**, max **1702 ms** (target max < 1.5 s) | median 57 ms, p95 2153 ms, max 2368 ms |
+| files after the steady part | _index 4, _packs 6; no automatic step left | the same |
+| full verify after each part | OK | OK |
+
+Pull test (automatic maintenance on): 5 saves finished, the 6th failed with WRITE_FAILED (stick pulled). The
+p10-check result is still to come. The last line of the run ("cleanup failed ... I/O error") is the probe's own
+cleanup of its stick test folder after the pull: the stick was gone; that folder had been removed before the pull.
+
+What it means:
+- A save behind maintenance waits for one step now: 553 ms instead of 13.6 s. That goal is met.
+- The total work is not "about the same": 21.6 s instead of 10.0 s on the stick (6.5 s instead of 2.9 s on the
+  phone). Every capped run scans (decrypts) all index files again: about 105 index files, 29 times.
+- The steady state misses the target by a little on the stick, and more on the phone, so it is CPU, not the stick:
+  the slow saves wait behind a compaction step. Below 1 MiB of live data the merged pack stays a candidate, so every
+  automatic chain (every 4 commits) reads all about 234 notes whole and rewrites them (the open point in
+  docs/VAULT-DESIGN.md 8.6).
