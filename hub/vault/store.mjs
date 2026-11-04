@@ -10,20 +10,18 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { fail, ioError as failedWrite } from './errors.mjs';
-import { zero, fileIdToName } from './bytes.mjs';
+import { zero } from './bytes.mjs';
 import { subkeys } from './keys.mjs';
 import { parseHeader, verifyHeaderMac } from './header.mjs';
-import { sealVx, newFileId, parseVxFileName } from './vx.mjs';
+import { parseVxFileName } from './vx.mjs';
+import { buildPacks } from './packs.mjs';
 import { openVxReader } from './vxread.mjs';
-import { encodeIndex, encodePack, readPackToc, usage, INDEX_LIMITS } from './indexfile.mjs';
+import { encodeIndex, readPackToc, usage, INDEX_LIMITS } from './indexfile.mjs';
 import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createReplica, PACK_DIR } from './replica.mjs';
 import { runCleanup } from './cleanup.mjs';
 import { createVfs } from './vfs.mjs';
 import { Draft, checkPath } from './store-ops.mjs';
 
-/** Blob bytes per pack (the rest of the 32 MiB is room for the table of contents) and pieces per pack. */
-export const PACK_DATA = 31 * 1024 * 1024;
-const PACK_PIECES = 4096;
 const TOC_CACHE = 32;
 export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexBytes: 16 * 1024 * 1024, fileBytes: INDEX_LIMITS.fileBytes });
 
@@ -31,7 +29,7 @@ export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexByte
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #q = []; #running = null; #reads = 0;
-  #tocs = new Map();
+  #tocs = new Map(); #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null;
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -55,7 +53,8 @@ export class Store {
    * Open a replica with a data key and its checked header (see openVaultFolder for the usual way in).
    * @param {string} dir
    * @param {{dk: Buffer, header: object, headerText: string, headerInfo?: object, guard?: Function,
-   *   random?: Function, now?: () => number, limits?: object}} o  limits: tests only
+   *   random?: Function, now?: () => number, limits?: object, autoCleanupEvery?: number}} o  limits: tests only;
+   *   autoCleanupEvery: queue a cleanup after this many commits (default 16, 0 = never), so index files cannot pile up
    */
   static async open(dir, o) {
     verifyHeaderMac(o.header, o.dk);
@@ -69,6 +68,7 @@ export class Store {
     s.#random = o.random || randomBytes;
     s.#now = o.now || Date.now;
     s.#limits = { ...STORE_LIMITS, ...o.limits };
+    s.#autoEvery = o.autoCleanupEvery ?? 16;
     s.#keys = subkeys(s.#dk, o.header.vaultId, o.header.epoch);
     s.#ctx = { kFile: s.#keys.file, vaultId: o.header.vaultId, epoch: o.header.epoch };
     try {
@@ -88,7 +88,8 @@ export class Store {
   /** Counts and problems, for the UI (no names). */
   status() {
     return { seq: this.#state.seq, files: this.#state.files.size, trash: this.#state.trash.length,
-      header: this.#headerInfo.used, problems: [...this.#problems], broken: this.#broken, closed: this.#closed };
+      header: this.#headerInfo.used, problems: [...this.#problems], broken: this.#broken, closed: this.#closed,
+      lastCleanup: this.#lastCleanup };
   }
 
   // ---- reading (the committed state; no queue) ----
@@ -227,6 +228,13 @@ export class Store {
   /** Remove leftovers (see the note at the top). @returns {Promise<{done: boolean, reasons?: string[], removed?: object}>} */
   cleanup() { return this.#task(() => this.#cleanup()); }
 
+  /** After every `autoCleanupEvery` commits, queue a cleanup; its result (or error code) goes to status().lastCleanup. */
+  #maybeAutoCleanup() {
+    if (!this.#autoEvery || ++this.#sinceCleanup < this.#autoEvery) return;
+    this.#sinceCleanup = 0;
+    this.#q.push({ kind: 'task', fn: () => this.#cleanup(), resolve: () => {}, reject: (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; } });
+  }
+
   /** Replace the header (both copies). It must be for this vault and epoch, with a higher hseq and a valid MAC. */
   writeHeader(text) {
     return this.#task(async () => {
@@ -333,32 +341,13 @@ export class Store {
     this.#current = { name, seq: prep.next.seq };
     this.#state = prep.next;
     for (const [it, r] of ok) it.resolve(r);
+    this.#maybeAutoCleanup();
   }
 
   /** Build the packs for the new blobs, fill in the extents, encode the next index. No I/O. */
   #prepare(d, now) {
-    const groups = [];
-    let cur = { pieces: [], bytes: 0 };
-    for (const [id, blob] of d.newBlobs) {
-      for (let off = 0, part = 0; off < blob.data.length; part++) {
-        if (cur.bytes >= PACK_DATA || cur.pieces.length >= PACK_PIECES) { groups.push(cur); cur = { pieces: [], bytes: 0 }; }
-        const take = Math.min(PACK_DATA - cur.bytes, blob.data.length - off);
-        cur.pieces.push({ id, part, data: blob.data.subarray(off, off + take), path: blob.path, t: now });
-        cur.bytes += take;
-        off += take;
-      }
-    }
-    if (cur.pieces.length) groups.push(cur);
-    const ext = new Map();
-    const packSizes = new Map(this.#state.packSizes);
-    const packs = groups.map((g) => {
-      const fileId = newFileId(this.#random);
-      const name = fileIdToName(fileId);
-      const { payload, offsets } = encodePack(g.pieces);
-      g.pieces.forEach((p, i) => { if (!ext.has(p.id)) ext.set(p.id, []); ext.get(p.id).push([name, offsets[i], p.data.length]); });
-      packSizes.set(name, payload.length);
-      return { name, file: sealVx(payload, this.#ctx, { kind: 'pack', fileId }) };
-    });
+    const { packs, ext, sizes } = buildPacks(d.newBlobs, this.#ctx, this.#random, now);
+    const packSizes = new Map([...this.#state.packSizes, ...sizes]);
     const fill = (e) => (e.kind === 'f' && e.x === null ? { ...e, x: ext.get(e.id) } : e);
     const files = new Map([...d.files].map(([p, e]) => [p, fill(e)]));
     const trash = d.trash.map(fill);
@@ -373,7 +362,10 @@ export class Store {
 
   async #cleanup() {
     if (this.#reads) return { done: false, reasons: ['reads in progress'] };
-    return runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
+    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
+    this.#lastCleanup = r.done ? { done: true } : { done: false, reasons: r.reasons };
+    this.#sinceCleanup = 0;
+    return r;
   }
 }
 

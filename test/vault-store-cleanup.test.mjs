@@ -17,7 +17,7 @@ const roots = [];
 after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'stickhub-unplug-')); roots.push(d); return d; };
 async function fresh() { const t = await makeTestStore(); roots.push(t.root); return t; }
-const open = (dir, v, guard) => openVaultFolder(dir, (h) => unlockWithPassphrase(h, v.passphrase), { guard });
+const open = (dir, v, guard) => openVaultFolder(dir, (h) => unlockWithPassphrase(h, v.passphrase), { guard, autoCleanupEvery: 0 });
 
 /** Everything a user could see: files with content, folders, trash. */
 async function snapshot(s) {
@@ -120,6 +120,16 @@ test('cleanup does nothing when a header copy fails its check', async () => {
     writeFileSync(file, keep);
   }
   assert.equal((await (await open(t.dir, t.v)).cleanup()).done, true);
+});
+
+test('a cleanup runs by itself every 16 commits, so index files cannot pile up', async () => {
+  const t = await fresh();
+  for (let i = 0; i < 40; i++) await t.store.write('n/counter.md', `v${i}`);
+  while (t.store.status().lastCleanup === null) await new Promise((r) => setImmediate(r));
+  await t.store.mkdir('n/flush'); // the queue has run everything before it
+  assert.equal(t.store.status().lastCleanup.done, true);
+  assert.ok(readdirSync(join(t.dir, '_index')).length <= 2 + 16, `${readdirSync(join(t.dir, '_index')).length} index files`);
+  assert.equal((await (await open(t.dir, t.v)).read('n/counter.md')).toString(), 'v39');
 });
 
 test('cleanup never touches files it does not own', async () => {
