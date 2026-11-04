@@ -2,8 +2,8 @@
 
 Status: **design only, nothing is built.** Claude and Fabian review this first.
 Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, run 7) and are marked **(p9)**.
-Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not confirmed yet: whether the
-fingerprint box has a pattern button, and what is in front after the touch (section 5).
+Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not known yet: what is in front
+after the touch in the fingerprint box (section 5); the hub brings its page back either way.
 
 ## 1. Summary
 - Today the app data on the stick (`HUB/data/`) is plain files. Whoever finds the stick reads everything.
@@ -165,11 +165,11 @@ Measured **(p9, termux-api 0.60.0)**:
 - It is a **time window only**: the key signs for N seconds after the phone was unlocked with the fingerprint or the
   pattern, and refuses after that. No prompt shows when it signs.
 - A successful `termux-fingerprint` (the "fingerprint box") also opens the window. It takes a title (`-t`), so it
-  can say "Unlock StickHub". Whether the box has a pattern button is **not confirmed** (the probe's question was
-  unclear; its wording is fixed).
+  can say "Unlock StickHub". The box has **no pattern button**: fingerprint only (Fabian checked with
+  `termux-fingerprint -t "Test"`).
 - Started from the background while StickHub is in front, the box works (fingerprint accepted, sign ok, 4.3 s), but
   Android **switches to the Termux:API app** to show it (Fabian, after the run). Not known yet: what is in front
-  after the touch.
+  after the touch, so the hub always brings its page back.
 
 The build:
 - Key: RSA-2048, `generate -u 30` (open question 1).
@@ -177,9 +177,9 @@ The build:
   the stick or tap the widget), that is all: no extra touch. If `sign` gives nothing:
   `termux-fingerprint -t "Unlock StickHub"`, then `sign` again, then `termux-open-url` to bring StickHub back to the
   front (the box switched to the Termux:API app).
-- Pattern instead of the finger: lock the phone and unlock it with the pattern (p9: this opens the window), then tap
-  **Unlock** in the hub within 30 s; its first `sign` then works. A pattern button in the box, if there is one,
-  works too.
+- Pattern instead of the finger (the box has none): lock the phone and unlock it with the pattern (p9: this opens
+  the window), then tap **Unlock** in the hub within 30 s; its first `sign` then works. The lock screen says so:
+  "Finger not working? Lock the phone, unlock it with your pattern, then tap Unlock."
 - Cancelled or failed: the passphrase or the paper code.
 
 Honest strength:
@@ -476,8 +476,7 @@ To avoid or shorten the fingerprint-box path:
 2. Poll mountinfo every 1 s instead of 2 s (0.7 ms per read): 0.5 s less on average.
 3. Option: try the sign before opening the page. That costs about 1 s on the fast path, but on the box path the
    screen goes Termux:API -> StickHub only once (open question 1).
-4. Probe 10 (after the build) measures both paths, what is in front after the touch, and whether the box has a
-   pattern button.
+4. Probe 10 (after the build) measures both paths and what is in front after the touch.
 The passphrase path is slower (typing + 0.9 s Argon2id) and is not the daily path.
 
 ## 10. Tests
