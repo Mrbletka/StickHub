@@ -121,7 +121,8 @@ Adding an engine = adding one file. Leave room for cli, custom command and game-
 - Status chip: stick connected / syncing / conflicts / stick has a different commit. A tile whose data waits for sync shows "pending".
 - "Sync now" button. Short "Stick connected" animation on plug-in.
 - Safe-area insets, no hover-only features, CSS animations only, no heavy WebGL.
-- PWA: manifest (standalone, maskable icons 192/512), service worker caching the shell, friendly offline page ("Hub is not running") when the server is down.
+- PWA: manifest (standalone; hub/ui/icons: icon-192 + icon-512 "any", icon-maskable-512 "maskable", the owner's art:
+  do not regenerate; bump CACHE in hub/ui/sw.js when they change), service worker caching the shell, friendly offline page ("Hub is not running") when the server is down.
 
 ## Sync
 Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.

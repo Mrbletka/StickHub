@@ -2,9 +2,9 @@
 // Network first (the hub is local and fast, so a git pull is visible at once); the cache is only the fallback.
 // Bump CACHE when the SHELL list changes.
 
-const CACHE = 'stickhub-v1';
-const SHELL = ['/', '/app.css', '/app.js', '/api.js', '/player.js', '/stick.js', '/icon.svg', '/offline.html',
-  '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-192.png', '/icons/maskable-512.png'];
+const CACHE = 'stickhub-v2';
+const SHELL = ['/', '/app.css', '/app.js', '/api.js', '/player.js', '/stick.js', '/offline.html',
+  '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
