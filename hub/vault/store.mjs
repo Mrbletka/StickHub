@@ -241,9 +241,9 @@ export class Store {
   cleanup() { this.#usable(); return this.#maint.run('cleanup'); }
 
   /**
-   * Move the live pieces of small or mostly dead packs into new ~8 MiB packs: one commit (compact.mjs). Not while there
-   * are problems. Stops between files when the signal is aborted (nothing written then).
-   * @param {{maxBytes?: number, signal?: AbortSignal}} [o]
+   * Move the live pieces of small or mostly dead packs into new ~8 MiB packs: one commit (compact.mjs), reading at most
+   * maxPacks packs (12) and maxBytes live bytes (16 MiB). Not while there are problems. Stops between files when the
+   * signal is aborted (nothing written then). @param {{maxBytes?: number, maxPacks?: number, signal?: AbortSignal}} [o]
    */
   compact(o = {}) { return this.#task(() => compactStore(this.#inner(o))); }
 
@@ -352,7 +352,7 @@ export class Store {
   /** What compaction and maintenance need from the store (compact.mjs). */
   #inner(o = {}) {
     return { state: this.#state, problems: this.#problems, pr: this.#packs, kId: this.#keys.contentId, ctx: this.#ctx,
-      random: this.#random, now: this.#now(), signal: o.signal, maxBytes: o.maxBytes, commit: (d, now) => this.#commitDraft(d, now) };
+      random: this.#random, now: this.#now(), signal: o.signal, maxBytes: o.maxBytes, maxPacks: o.maxPacks, commit: (d, now) => this.#commitDraft(d, now) };
   }
 
   /** What a maintenance step needs from the store (maintain.mjs). */

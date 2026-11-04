@@ -3,7 +3,7 @@
 // the old packs stay until a later full cleanup removes them (they are kept while the previous index uses them).
 // - planCompaction: candidates = packs whose live bytes are under 50% of their size, and live packs under 1 MiB.
 //   Worth it only with at least 4 candidates, or at least 4 MiB of dead bytes in them. Cheapest packs first, up to
-//   maxBytes of live bytes per call.
+//   maxBytes of live bytes and maxPacks packs read per call (job 2b: one call is one step of maintain()).
 // - gatherPieces: reads every affected file whole through the normal checked path (content id checked at the end),
 //   keeps the bytes of the pieces that move, and stops between files when the signal is aborted.
 
@@ -16,18 +16,20 @@ import { Draft } from './store-ops.mjs';
 /** Trash entries older than this are dropped (decision 10). */
 export const TRASH_DAYS_MS = 30 * 24 * 3600 * 1000;
 
-export const COMPACT = Object.freeze({ maxBytes: 16 * 1024 * 1024, target: 8 * 1024 * 1024, small: 1024 * 1024,
-  deadShare: 0.5, minCandidates: 4, minDead: 4 * 1024 * 1024 });
+export const COMPACT = Object.freeze({ maxBytes: 16 * 1024 * 1024, maxPacks: 12, target: 8 * 1024 * 1024,
+  small: 1024 * 1024, deadShare: 0.5, minCandidates: 4, minDead: 4 * 1024 * 1024 });
 
 /**
  * Which packs to compact now, or null when it is not worth it.
  * @param {{files: Map, trash: object[], packSizes: Map<string, number>}} state
- * @param {{maxBytes?: number}} [o]
+ * @param {{maxBytes?: number, maxPacks?: number}} [o]  per call: live bytes moved, packs read
  * @returns {{packs: Set<string>, liveBytes: number, candidates: number, dead: number}|null}  candidates, dead: for the
  *   progress check of stepped maintenance (maintain.mjs)
  */
 export function planCompaction(state, o = {}) {
   const maxBytes = o.maxBytes ?? COMPACT.maxBytes;
+  const maxPacks = o.maxPacks ?? COMPACT.maxPacks;
+  if (![maxBytes, maxPacks].every((n) => Number.isSafeInteger(n) && n >= 1)) fail('BAD_INPUT', 'compact: maxBytes and maxPacks must be whole numbers from 1');
   const live = usage(state.files, state.trash);
   const cand = [];
   let dead = 0;
@@ -40,7 +42,7 @@ export function planCompaction(state, o = {}) {
   const packs = new Set();
   let liveBytes = 0;
   for (const [name, l] of cand) {
-    if (packs.size && liveBytes + l > maxBytes) break;
+    if (packs.size && (liveBytes + l > maxBytes || packs.size >= maxPacks)) break;
     packs.add(name);
     liveBytes += l;
   }
@@ -78,12 +80,12 @@ export async function gatherPieces(state, chosen, pr, kId, signal) {
  * One compaction commit (inside the store's write queue). Not while there are problems: full cleanup is refused then,
  * so new packs would only fill the disk.
  * @param {{state: object, problems: string[], pr: object, kId: Buffer, ctx: object, random: Function, now: number,
- *   signal?: AbortSignal, maxBytes?: number, commit: (d: Draft, now: number) => Promise<void>}} s
+ *   signal?: AbortSignal, maxBytes?: number, maxPacks?: number, commit: (d: Draft, now: number) => Promise<void>}} s
  * @returns {Promise<{done: boolean, reason?: string, packs?: number, newPacks?: number, bytes?: number}>}
  */
 export async function compactStore(s) {
   if (s.problems.length) return { done: false, reason: 'problems' };
-  const plan = planCompaction(s.state, { maxBytes: s.maxBytes });
+  const plan = planCompaction(s.state, { maxBytes: s.maxBytes, maxPacks: s.maxPacks });
   if (!plan) return { done: false, reason: 'not worth it' };
   let pieces;
   try {

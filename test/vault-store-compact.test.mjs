@@ -141,3 +141,22 @@ test('no compaction while there are problems; cancelled = nothing written; nothi
   assert.deepEqual(await s3.maintain(), { purged: 0, compacted: null, cleanup: null, steps: 0 });
   assert.equal(writes, 0);
 });
+
+test('one compaction call reads at most maxPacks packs (default 12) in one commit; maintain() compacts in steps', async () => {
+  const t = await fresh({ autoCleanupEvery: 0 });
+  const s = t.store;
+  for (let i = 0; i < 40; i++) await s.write(`n/${i}.md`, `note ${i}`); // 40 small packs
+  const indexes = readdirSync(join(t.dir, '_index')).length;
+  const r = await s.compact();
+  assert.deepEqual([r.done, r.packs, r.newPacks], [true, 12, 1]);
+  assert.equal(readdirSync(join(t.dir, '_index')).length, indexes + 1, 'one commit');
+  assert.equal((await s.compact({ maxPacks: 5 })).packs, 5);
+  await assert.rejects(async () => s.compact({ maxPacks: 0 }), { code: 'BAD_INPUT' });
+  const m = await s.maintain();
+  assert.equal(m.compacted.done, true);
+  assert.ok(m.compacted.steps >= 2, `${m.compacted.steps} compaction steps`);
+  assert.ok(m.compacted.packs <= 12 * m.compacted.steps);
+  assert.ok(s.status().packs <= 3, `${s.status().packs} live packs`);
+  for (let i = 0; i < 40; i++) assert.equal((await s.read(`n/${i}.md`)).toString(), `note ${i}`);
+  assert.equal((await s.verify()).ok, true);
+});
