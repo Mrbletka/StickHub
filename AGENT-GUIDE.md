@@ -151,6 +151,7 @@ A finished phase is recorded here with its commit hash (no git tags).
 2. Stick layout + sync CLI (plan, run, conflicts, trash, unplug-safe). Test with a simulated interrupted copy.
    **Done: b306b14** (tested on the phone and the real stick 2026-11-04, unplug mid-sync included; docs/PROBES.md run 3).
 3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
+   **Done: f8da240** (tested on the phone 2026-11-04: plug in -> open and logged in 6.6 s, as the installed app; docs/PROBES.md run 4).
 4. Windows launcher + portable Node (design only until I ask).
 
 ## Delivery

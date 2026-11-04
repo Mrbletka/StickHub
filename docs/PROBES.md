@@ -88,3 +88,18 @@ No `termux-usb` polling, no `termux-setup-storage` (only once, at install, for s
 
 Every file written to the stick costs about 120-160 ms, as the speed probe predicted. An unplug mid-write gives EIO;
 the run stops, and the next run finishes the work with no leftovers.
+
+## Run 4 - 2026-11-04: probe 7, phase 3 end to end (code f8da240)
+Hub stopped first (worst case: the watcher has to start it). Times from pressing Enter and plugging in the stick.
+| Step | Result |
+|---|---|
+| plug in -> hub page open and logged in | **6.6 s** (goal: 10 s or less) |
+| stick found -> hub started | 1.1 s |
+| stick found -> termux-open-url returned | 2.3 s |
+| opened as | the installed StickHub app (no browser bar) |
+| player full screen with Home button | yes |
+| Android back -> tiles | yes |
+| Home button -> tiles | yes |
+| hub stopped -> "Hub is not running" page | yes |
+
+The rest of the 6.6 s is the mount (~1 s after USB), the 2 s poll, and the page loading and redeeming its login code.
