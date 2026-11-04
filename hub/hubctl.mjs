@@ -2,7 +2,7 @@
 
 import { request } from 'node:http';
 import { spawn } from 'node:child_process';
-import { openSync, closeSync, mkdirSync, statSync, renameSync } from 'node:fs';
+import { openSync, closeSync, mkdirSync, statSync, renameSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readToken } from './auth.mjs';
 
@@ -77,20 +77,28 @@ export function startDetached(root, script, log) {
   try {
     const child = spawn(process.execPath, [join(root, script)], { cwd: root, detached: true, stdio: ['ignore', fd, fd] });
     child.unref();
-    return child.pid;
+    return child;
   } finally {
     closeSync(fd);
   }
 }
 
+/** Last non-empty line of a log file (for error messages). */
+function lastLine(file) {
+  try { return readFileSync(file, 'utf8').trim().split('\n').pop() || ''; } catch { return ''; }
+}
+
 /** Start the hub in the background if it is not running; wait until it answers (max ~10 s). */
 export async function ensureHub(root, port = HUB_PORT) {
   if (await hubRunning(port)) return { started: false };
-  const pid = startDetached(root, 'hub/server.mjs', 'hub.log');
+  const child = startDetached(root, 'hub/server.mjs', 'hub.log');
+  let exited = null;
+  child.once('exit', (code) => { exited = code; });
   const end = Date.now() + 10_000;
   while (Date.now() < end) {
     await new Promise((r) => setTimeout(r, 200));
-    if (await hubRunning(port)) return { started: true, pid };
+    if (exited !== null) throw new Error(`The hub stopped at once: ${lastLine(join(root, 'logs', 'hub.log'))}`);
+    if (await hubRunning(port)) return { started: true, pid: child.pid };
   }
   throw new Error('The hub did not start within 10 s. See logs/hub.log');
 }

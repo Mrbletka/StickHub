@@ -11,7 +11,9 @@ import { serveStatic, send } from './static-files.mjs';
 import { codeCommit } from './version.mjs';
 import { StickService } from './sync/service.mjs';
 import { loadToken, LoginCodes } from './auth.mjs';
-import { stickhubHome } from './config.mjs';
+import { stickhubHome, loadSettings } from './config.mjs';
+import { listVolumes } from './platform/termux.mjs';
+import { findStick } from './stick.mjs';
 import { PidFile, cleanupLeftovers } from './proc.mjs';
 
 export const HUB_PORT = 8787;
@@ -94,6 +96,14 @@ export async function createHub(opts = {}) {
 }
 
 async function main() {
+  // Cartridge feel: with requireStick, no stick = no hub.
+  if ((await loadSettings()).requireStick) {
+    const s = await findStick((await listVolumes()).volumes);
+    if (s.state !== 'ok') {
+      console.error('requireStick is on (~/.stickhub/settings.json) and no stick with HUB is plugged in. Plug it in and try again.');
+      process.exit(1);
+    }
+  }
   let shutdown = () => {};
   const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0) });
   for (const e of hub.procman.list()) if (e.problems.length) console.warn(`app ${e.id}: ${e.problems.join('; ')}`);

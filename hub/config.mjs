@@ -29,3 +29,29 @@ export async function deviceId(home = stickhubHome()) {
   await rename(`${file}.tmp`, file);
   return id;
 }
+
+const DEFAULT_SETTINGS = { requireStick: false, autoPull: false };
+
+/**
+ * Settings from ~/.stickhub/settings.json (all optional):
+ *   requireStick: the hub refuses to start without the stick (cartridge feel). Default false.
+ *   autoPull: the watcher runs `git pull --ff-only` when the stick is plugged in. Default false.
+ * @param {string} home
+ * @returns {Promise<{requireStick: boolean, autoPull: boolean}>}
+ */
+export async function loadSettings(home = stickhubHome()) {
+  let j;
+  try {
+    j = JSON.parse(await readFile(join(home, 'settings.json'), 'utf8'));
+  } catch (e) {
+    if (e.code === 'ENOENT') return { ...DEFAULT_SETTINGS };
+    throw new Error(`${join(home, 'settings.json')}: ${e.message}`);
+  }
+  const out = { ...DEFAULT_SETTINGS };
+  for (const [k, v] of Object.entries(j || {})) {
+    if (!(k in DEFAULT_SETTINGS)) console.warn(`settings.json: unknown setting "${k}" ignored`);
+    else if (typeof v !== 'boolean') console.warn(`settings.json: "${k}" must be true or false`);
+    else out[k] = v;
+  }
+  return out;
+}

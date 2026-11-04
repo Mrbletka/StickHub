@@ -54,6 +54,15 @@ export function createGit(root) {
       if (r.code === 1) return false;
       return null;
     },
+    /** git pull --ff-only (setting autoPull). Returns a short result text, never throws. */
+    async pullFastForward() {
+      try {
+        const r = await git(root, ['pull', '--ff-only', '--quiet']);
+        return r.code === 0 ? 'ok' : `failed: ${(r.stderr || r.stdout).trim().split('\n')[0]}`;
+      } catch (e) {
+        return `failed: ${e.message}`;
+      }
+    },
     /**
      * Tracked files under the given folders.
      * @param {string[]} dirs
