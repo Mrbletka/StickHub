@@ -45,7 +45,7 @@ async function check(r) {
   r.add('state', state);
   r.add('problems', JSON.stringify(st.problems));
   const c = await s.cleanup();
-  r.add('cleanup', `${c.level}, removed ${JSON.stringify(c.removed)}`);
+  r.add('cleanup', `${c.level}, ${c.steps} steps, removed ${JSON.stringify(c.removed)}`);
   const v = await s.verify();
   r.add('verify (full)', v.ok ? 'OK' : `PROBLEMS ${JSON.stringify({ header: v.header, damaged: v.indexes.damaged.length, packs: v.packs })}`);
   await s.close();

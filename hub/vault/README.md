@@ -22,7 +22,8 @@ a key, a passphrase, a paper code or any other input value.
 | `store-ops.mjs` | file operations on a draft (check first, then change) |
 | `packs.mjs` | packs and the next index for a commit (decoded back once before it is written) |
 | `queue.mjs` | the write queue: one thing at a time; changes of the same tick share one commit |
-| `cleanup.mjs`, `compact.mjs` | cleanup (full or light), compaction, maintain() |
+| `cleanup.mjs`, `compact.mjs` | cleanup (full or light) in capped runs; compaction (at most 12 packs per call) |
+| `maintain.mjs` | maintenance in steps: each step its own queue item, so a save waits for one step at most |
 | `verify.mjs`, `export.mjs` | `vault verify` and `vault export` (CLI in `hub/cli-vault.mjs`) |
 | `store.mjs` | the store API: `Store.create`, `openVaultFolder`, read/write/move/trash/maintain/verify |
 

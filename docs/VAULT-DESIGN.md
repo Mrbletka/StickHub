@@ -468,7 +468,7 @@ system. So:
 An encrypted file is never changed in place. A change:
 1. encrypts the new content into a new pack under a new random name, fsync;
 2. writes a new index file (seq + 1) as `<id>.vx.part`, fsync, renames it to `<id>.vx`, fsyncs the folder;
-3. later, cleanup deletes old index files, `.part` leftovers and unreferenced packs (by itself every 16 commits).
+3. later, cleanup deletes old index files, `.part` leftovers and unreferenced packs (by itself every 4 commits, in small steps).
 The newest index that decrypts is the truth. Pulled out after step 1: the pack is garbage, the old index still rules.
 During step 2: the `.part` is ignored, the previous index rules. A failed write marks the open store broken; the next
 open reads the truth from the disk. Several writes that arrive together share one
@@ -485,10 +485,11 @@ pack and one index (group commit). The header is the only file changed in place:
 | Find what changed on the stick | read and hash every file | read one index file |
 | Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
 | Cleanup | - | about 40-55 ms per removed file (29 index files: 1.2 s) |
-| maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10). Every 16 commits: about 1.7 s (estimate) |
-Open point (run 10): a save waits behind the whole maintain() task. Before the data API makes saves interactive,
-maintenance on the stick should not block saves for seconds (for example: delete in small slices, letting waiting
-saves go first). Not built.
+| maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10, one big task) |
+| the same, in steps (job 2b) | - | pending: probe 10 run 11 (total time, steps, the wait of a save behind it; target < 1.5 s) |
+| steady state: 100 saves, automatic maintenance on | - | pending: probe 10 run 11 (median, p95, max of a save; target max < 1.5 s) |
+Run 10 showed a save waiting behind the whole maintain() task. Job 2b cuts maintenance into steps (8.6): a save
+waits for at most one step, about 10 deleted files (0.55 s on the stick) or one compaction call.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
 everything that touches many files. Pull test: pulled mid-saves, the stick reopened with the last finished save, no
 problems, cleanup and verify fine.
@@ -531,11 +532,11 @@ the stick is plugged in.
 
 ### 8.6 Compaction and cleanup
 - Runs inside the store's write queue, as `maintain()`: purge trash older than 30 days (store clock), compact if worth
-  it, then clean up. The store queues it after the first commit of a session and then every 16 commits; with nothing
-  to do it does no I/O.
+  it, then clean up. The store starts it after the first commit of a session and then every 4 commits, in steps
+  (below); with nothing to do it does no I/O.
 - Compaction (`compact.mjs`, one commit per call, stoppable between files): candidates are packs whose live bytes are
   under 50% of their size, and live packs under 1 MiB; it runs only with at least 4 candidates or 4 MiB of dead bytes
-  in them, cheapest first, up to 16 MiB of live bytes per call. The live pieces move into new packs of about 8 MiB;
+  in them, cheapest first, up to 16 MiB of live bytes and 12 packs per call. The live pieces move into new packs of about 8 MiB;
   every affected file is read whole through the checked path (content id) before the commit; extents of files and
   trash are updated; a piece shared by several files (dedupe) moves once; a file over several packs moves piece by
   piece and keeps its part numbers. The old packs stay while the previous index uses them; a later full cleanup
@@ -563,15 +564,28 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
   summed, plus `steps`), but each step is its own item in the write queue, queued only after the previous step
   finished. Saves that arrive meanwhile are already in the queue, so they go first. A chain ends when nothing is
   left, or when a run is blocked, busy (reads in progress) or fails. It never spins: compaction steps continue only
-  while the number of candidates or their dead bytes goes down, and every chain stops after 50,000 steps.
+  while the number of candidates or their dead bytes goes down; cleanup steps do at most as much work as the chain's
+  first cleanup run saw (a run reports `left`, the units it saw and did not do), so saves that arrive all the time
+  cannot keep a chain going (it ends with `more: true`; the next maintenance takes the rest); and every chain stops
+  after 50,000 steps.
 - **Automatic maintenance.** The same triggers (the first commit of a session, then every `autoCleanupEvery`
   commits, now 4 by default) queue one step at the tail; a step that leaves work queues the next step at the tail.
-  Only one automatic chain runs at a time. Its errors go to `status().lastCleanup`, never to a save.
+  Only one automatic chain runs at a time, and it gives way to an explicit `maintain()` or `cleanup()`: it does not
+  start while one runs, and a running one ends (its queued step is dropped, or it queues none). Each chain has at
+  most one step in the queue, so a save waits for at most one step per running chain (once: the end of a running
+  automatic step plus the first explicit step). `status().maintaining` is true while the automatic chain runs. Its
+  errors go to `status().lastCleanup`, never to a save.
 - **close()** waits for the step that is running and for everything callers queued (saves, explicit tasks).
   Automatic steps that have not started are dropped, a running one queues no successor, and an explicit `maintain()`
   or `cleanup()` stops after its current step. So `close()` takes at most about one step.
 - **The 200-file guard** runs one capped cleanup run inside the commit, then refuses if still at the limit.
 - **Unfinished header writes** (`#dirty`) are cleared only by a full run that ended with `more: false`.
+- **Cost of a run.** Every capped run scans (decrypts) all index files again and lists `_packs`: with a big backlog
+  (say 100 index files) that scan is repeated in each step. A scan cached between runs would be cheaper, but it
+  would carry state from one run to the next; not built. Open: below 1 MiB of live data the merged pack stays a
+  compaction candidate (live packs under 1 MiB), so in a small vault each automatic chain with 4 new small packs
+  rewrites all live data (about 210 ms for 500 KiB and 234 notes on a fast disk). Probe 10 run 11 shows whether
+  that matters on the stick; if it does, merge only packs of similar size (not built).
 
 ## 9. Speed: plug-in to open in 10 s or less
 "Open" = the hub page shows the tiles, unlocked.
@@ -765,6 +779,15 @@ reads back), unplug at every step of a compaction, trash at 29 and 31 days with 
 over several packs, a read started before the compaction commit (this process's cleanup waits for running reads),
 no compaction while there are problems, a cancelled compaction writes nothing, `maintain()` with nothing to do writes
 nothing.
+
+### v1 step 2b: maintenance in small steps: built
+As described in 8.6 (`maintain.mjs`, capped `runCleanup`, `compact({maxPacks})`). Tests (`vault-store-steps`):
+cleanupMax 1 with a backlog of 30 files and saves all the time (no save more than one deletion behind, verify OK,
+`maintain()` ends), the same with automatic steps after every commit, unplug at every step of a stepped
+`maintain()`, blocked (another writer between steps) and busy (a read opened between steps) end the chain after
+one deletion, `close()` does not wait for pending steps, the automatic chain gives way to `maintain()`; compaction
+reads at most 12 packs per call. Probe 10 gained the stepped worst case, the steady state with automatic
+maintenance on, and the pull test with automatic maintenance on.
 
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),

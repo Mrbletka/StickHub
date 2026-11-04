@@ -216,17 +216,22 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   maintain() (abf92c4), probe 10 store part (27fb91c; run on the phone 2026-11-04: all tests pass, one stick save 236 ms, pull test
   old state with no problems; docs/PROBES.md run 9); close-out: write queue in queue.mjs, reopen() after a failed
   save, one cleanup before NEEDS_REPAIR, #dirty kept until a full cleanup, probe 10 maintenance step.
-  **Job 2 (v1 step 2) done.** Next: v1 step 3 (data API).
+  **Job 2 (v1 step 2) done.**
+- Job 2b, maintenance in small steps (maintain.mjs, capped cleanup runs, compaction at most 12 packs per call,
+  probe 10 stepped worst case + steady state). Next: probe 10 run 11 on the phone, then v1 step 3 (data API).
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
-  indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup, compact (compaction
-  and maintain), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
+  indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
+  compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
 - Store rules: a .vx file is never changed in place; index files are committed by rename; the newest index that
   decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
   queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files
   beyond the 2 newest, never packs, damaged files or headers) when an index file or a header copy is damaged; none
   at all when the order of the indexes is unclear. maintain() (purge 30-day trash, compact, clean up) runs after the
-  first commit of a session and every 16 commits. Compaction never runs while there are problems. At 200 files in
-  _index commits are refused (NEEDS_REPAIR). File times are never used.
+  first commit of a session and every 4 commits, in steps (design 8.6): each step (a purge, one compaction call of at
+  most 12 packs, one cleanup run of at most 10 files) is its own queue item, so a save waits for one step at most;
+  every cleanup run does its own scan and checks. close() drops automatic steps that have not started. Compaction
+  never runs while there are problems. At 200 files in _index commits are refused (NEEDS_REPAIR) after one capped
+  cleanup run. File times are never used.
 - `node hub/cli.mjs vault verify|export` (hub/cli-vault.mjs): passphrase only from the terminal (no echo), never argv,
   env or a file; export never writes plain files on a stick, in the vault folder or in this clone.
 - Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,

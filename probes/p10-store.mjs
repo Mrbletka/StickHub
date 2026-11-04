@@ -1,8 +1,11 @@
 // Probe 10 (store part): the encrypted vault store on the real exFAT stick, with the phone's own storage as control.
 // It checks the cost estimates of docs/VAULT-DESIGN.md 8.3. Throwaway vaults only: a header with just a recovery slot,
 // random keys, nothing real. Paths are never printed (they hold the stick's volume id).
-// Then a pull test (needs Fabian): saves run in a loop on the stick; he pulls it; afterwards p10-check.mjs opens what
-// was left: the old or the new state, no problems, cleanup works; then it removes that test vault.
+// Maintenance runs in small steps (design 8.6): the worst case (100 piled-up saves, automatic off) and the steady
+// state (automatic on, defaults), each followed by a full verify.
+// Then a pull test (needs Fabian): saves run in a loop on the stick with the default automatic maintenance, so a pull
+// can hit a step; he pulls it; afterwards p10-check.mjs opens what was left: the old or the new state, no problems,
+// cleanup works; then it removes that test vault.
 
 import { mkdirSync, rmSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -33,7 +36,16 @@ function throwawayHeader() {
   const { slot, paperCode } = makeRecoverySlot({ dk, vaultId, epoch: 1 });
   return { dk, paperCode, headerText: buildHeader({ vaultId, epoch: 1, hseq: 1, slots: [slot] }, dk) };
 }
-const openWith = (dir, code) => openVaultFolder(dir, (h) => unlockWithPaperCode(h, code), { autoCleanupEvery: 0 });
+/** Open with the paper code; default options = automatic maintenance on. */
+const openWith = (dir, code, o = { autoCleanupEvery: 0 }) => openVaultFolder(dir, (h) => unlockWithPaperCode(h, code), o);
+const p95 = (xs) => Math.round([...xs].sort((a, b) => a - b)[Math.ceil(xs.length * 0.95) - 1]);
+const count = (dir, sub) => readdirSync(join(dir, sub)).length;
+
+async function verifyLine(r, label, s) {
+  const v = await s.verify();
+  r.add(`${label}: verify (full)`, v.ok ? 'OK' : `PROBLEMS ${JSON.stringify({ header: v.header, damaged: v.indexes.damaged.length, packs: v.packs, files: v.files })}`);
+  r.add(`${label}: problems`, JSON.stringify(s.status().problems));
+}
 
 async function dirFsync(dir) {
   let fh;
@@ -53,11 +65,14 @@ function what(m) {
   if (!m.purged && !m.compacted && !m.cleanup) return 'nothing to do';
   const c = m.compacted;
   const comp = !c ? 'not worth it' : c.done ? `${c.packs} packs (${Math.round(c.bytes / 1024)} KiB live) into ${c.newPacks}` : c.reason;
-  const cl = m.cleanup ? `${m.cleanup.level}, removed ${m.cleanup.removed.indexes} index + ${m.cleanup.removed.packs} pack files` : 'not needed';
-  return `purged ${m.purged}; compacted: ${comp}; cleanup: ${cl}`;
+  const cl = m.cleanup ? `${m.cleanup.level}, removed ${m.cleanup.removed.indexes} index + ${m.cleanup.removed.packs} pack files${m.cleanup.more ? ', more left' : ''}` : 'not needed';
+  return `${m.steps} steps; purged ${m.purged}; compacted: ${comp}; cleanup: ${cl}`;
 }
 
-/** maintain() after many saves, a second one (nothing to do), the delay one save feels behind it, then a verify. */
+/**
+ * Worst case, automatic maintenance off: maintain() after 100 piled-up saves (total time, steps), a second one
+ * (nothing to do), how long one save started right behind maintain() waits, then a verify.
+ */
 async function maintenance(r, label, s) {
   for (let i = 0; i < 100; i++) await s.write(`mt/note${i % 20}.md`, NOTE(i));
   let t = performance.now();
@@ -73,10 +88,28 @@ async function maintenance(r, label, s) {
   await s.write('mt/felt.md', NOTE(999));
   const felt = ms(t1);
   const m3 = await running;
-  r.add(`${label}: one save while maintain runs`, `${felt} ms (maintain ${ms(t)} ms: ${what(m3)})`);
-  const v = await s.verify();
-  r.add(`${label}: verify (full) after maintenance`, v.ok ? 'OK' : `PROBLEMS ${JSON.stringify({ header: v.header, damaged: v.indexes.damaged.length, packs: v.packs, files: v.files })}`);
-  r.add(`${label}: problems after maintenance`, JSON.stringify(s.status().problems));
+  r.add(`${label}: one save started right behind maintain (target stick < 1500 ms)`, `${felt} ms (maintain ${ms(t)} ms: ${what(m3)})`);
+  await verifyLine(r, `${label}: after maintenance`, s);
+}
+
+/** Steady state, automatic maintenance on (defaults): 100 saves in a row over 20 notes, then a verify. */
+async function steady(r, label, dir, code) {
+  const s = await openWith(dir, code, {});
+  const each = [];
+  for (let i = 0; i < 100; i++) {
+    const t = performance.now();
+    await s.write(`st/note${i % 20}.md`, NOTE(i));
+    each.push(performance.now() - t);
+  }
+  const st = stats(each);
+  r.add(`${label}: steady, 100 saves, automatic on (target stick max < 1500 ms)`, `median ${st.med} ms, p95 ${p95(each)} ms, max ${st.max} ms`);
+  r.add(`${label}: steady, files right after`, `_index ${count(dir, '_index')}, _packs ${count(dir, '_packs')}`);
+  const t = performance.now();
+  while (s.status().maintaining) await sleep(20);
+  r.add(`${label}: steady, automatic steps still running after`, `${ms(t)} ms; then _index ${count(dir, '_index')}, _packs ${count(dir, '_packs')}`);
+  r.add(`${label}: steady, last automatic cleanup`, JSON.stringify(s.status().lastCleanup));
+  await verifyLine(r, `${label}: steady`, s);
+  await s.close();
 }
 
 /** All measurements on one folder. */
@@ -97,12 +130,11 @@ async function measure(r, label, base) {
     const each = [];
     for (let i = 0; i < 30; i++) { t = performance.now(); await s.write(`n/single${i}.md`, NOTE(i)); each.push(performance.now() - t); }
     const st = stats(each);
-    const p95 = Math.round([...each].sort((a, b) => a - b)[Math.ceil(each.length * 0.95) - 1]);
-    r.add(`${label}: 30 single 2 KB saves`, `median ${st.med} ms, p95 ${p95} ms, min ${st.min}, max ${st.max}`);
+    r.add(`${label}: 30 single 2 KB saves`, `median ${st.med} ms, p95 ${p95(each)} ms, min ${st.min}, max ${st.max}`);
 
     t = performance.now();
     const c = await s.cleanup();
-    r.add(`${label}: cleanup after them`, `${ms(t)} ms, level ${c.level}, removed ${c.removed.indexes} index + ${c.removed.packs} pack files`);
+    r.add(`${label}: cleanup after them`, `${ms(t)} ms, ${c.steps} steps, level ${c.level}, removed ${c.removed.indexes} index + ${c.removed.packs} pack files`);
 
     const seq = s.status().seq;
     t = performance.now();
@@ -131,6 +163,7 @@ async function measure(r, label, base) {
     r.add(`${label}: problems`, JSON.stringify(s.status().problems));
     await maintenance(r, label, s);
     await s.close();
+    await steady(r, label, dir, h.paperCode);
     r.add(`${label}: folder fsync`, await dirFsync(dir));
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -146,7 +179,7 @@ async function pullTest(r, stickRoot, ask) {
   const h = throwawayHeader();
   const s0 = await Store.create(dir, { headerText: h.headerText, dk: h.dk, autoCleanupEvery: 0 });
   await s0.close();
-  const s = await openWith(dir, h.paperCode);
+  const s = await openWith(dir, h.paperCode, {}); // automatic maintenance on: a pull can hit a step
   mkdirSync(OUT, { recursive: true });
   const record = { note: 'TEST ONLY: a throwaway vault with random keys, for p10-check.mjs', root, dir, paperCode: h.paperCode, lastDone: -1 };
   writeFileSync(PULL_RECORD, JSON.stringify(record));
@@ -166,6 +199,7 @@ async function pullTest(r, stickRoot, ask) {
     writeFileSync(PULL_RECORD, JSON.stringify(record)); // on the phone, not the stick
   }
   r.add('pull test: saves done before the pull', `${record.lastDone + 1}, then ${error || 'no error within 120 s (not pulled?)'}`);
+  r.add('pull test: last automatic cleanup', JSON.stringify(s.status().lastCleanup));
   await s.close(); // broken after the failed save: close only forgets the keys
   console.log('\n>>> Plug the stick back in. Then run:\n    cd ~/StickHub && node probes/p10-check.mjs\n');
   r.add('pull test: next', 'plug the stick back in, run: node probes/p10-check.mjs');
