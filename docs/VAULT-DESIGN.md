@@ -475,16 +475,19 @@ open reads the truth from the disk. Several writes that arrive together share on
 pack and one index (group commit). The header is the only file changed in place: `.part`, fsync, rename, two copies.
 
 ### 8.3 Costs on the exFAT stick
-| Action | Plain files today (measured) | Vault (estimate; probe 10 is written and measures these on the phone: the numbers replace this column after its run) |
+| Action | Plain files today (measured) | Vault (measured, probe 10, PROBES.md run 9) |
 |---|---|---|
-| One Notebook save, data on the stick | 1 safe write, about 165 ms | new pack + new index: about 2 x 120-180 ms; a burst of saves = one commit |
-| Sync 120 changed small files | 15.5 s (129 ms per file) | 1 pack + 1 index on the stick: well under 1 s plus the bytes at 19 MB/s |
-| Delete 120 files | 14.1 s (moved to `.trash`) | index only: about 0.2 s |
-| Rename a folder of 300 notes | 300 renames | index only |
+| One Notebook save, data on the stick | 1 safe write, about 165 ms | median 236 ms, p95 245 ms (new pack + new index) |
+| 50 saves at once | about 50 x 130-165 ms = 6.5-8 s | 230 ms: one commit |
+| 5 MB file | 64 MB at 19 MB/s measured | write 469 ms, read 92 ms |
+| Sync 120 changed small files | 15.5 s (129 ms per file) | not measured yet; one commit like the burst above, plus the bytes |
+| Delete 120 files, rename a folder of 300 notes | 14.1 s; 300 renames | one commit, index only (no pack): at most about 0.24 s |
 | Find what changed on the stick | read and hash every file | read one index file |
-| Open (read the index) | - | one ~200 KB file: about 0.1 s |
-So the vault is slower than today only for a single save in data-on-stick mode (about 2x), and much faster for
-everything that touches many files.
+| Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
+| Cleanup | - | about 40 ms per removed file (29 index files: 1.2 s) |
+So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
+everything that touches many files. Pull test: pulled mid-saves, the stick reopened with the last finished save, no
+problems, cleanup and verify fine.
 
 ### 8.4 Three-way sync between the phone and the stick
 Both replicas use the same DK, so sync runs while unlocked.

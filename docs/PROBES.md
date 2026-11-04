@@ -194,8 +194,28 @@ keeps one safety net: if the hub page does not report itself visible within 2 s 
 ## Vault v1 step 2, part 1 (store) on the phone - 2026-11-04 (code ac569b2)
 `node --test`: 190 tests, 189 pass, 0 fail, 1 skipped (the fixture writer, by design), 26 s.
 
-## Probe 10 (vault store) - written, waiting for the phone run
-`sh probes/run-all.sh --only 10` measures the store on the stick and on the phone's storage (create, open, 30 single
-2 KB saves, a burst of 50, a 5 MB write and read, cleanup, open with 200+ notes, file sizes, folder fsync), then the
-pull test; after re-plugging, `node probes/p10-check.mjs` opens what the pull left. The numbers go here and into
-docs/VAULT-DESIGN.md 8.3.
+## Run 9 - 2026-11-04: probe 10, the vault store on the stick (code 27fb91c)
+`node --test` passed first (the command runs the probe only then). Throwaway vaults, random keys.
+| Step | Stick (exFAT) | Phone (control) |
+|---|---|---|
+| create a vault | 600 ms | 40 ms |
+| open, empty | 40 ms | 10 ms |
+| one 2 KB save (30 in a row) | median 236 ms, p95 245 ms (207-247) | median 19 ms, p95 40 ms |
+| cleanup after those 30 saves (29 index files removed) | 1193 ms | 219 ms |
+| burst of 50 saves in one tick | 230 ms, 1 commit | 45 ms, 1 commit |
+| 5 MB file write / read | 469 / 92 ms | 128 / 234 ms |
+| open with 230 notes | 32 ms | 39 ms |
+| index file (230 notes) | 65,560 bytes (the 64 KiB minimum) | same |
+| folder fsync | works | works |
+| problems | none | none |
+
+Pull test: 12 saves finished, the 13th failed with WRITE_FAILED (stick pulled). After re-plugging, `p10-check.mjs`:
+the vault opened with the **old state** (the last finished save), no problems, 13 index files; a **full** cleanup removed
+11 index and 11 pack files; a full verify said OK; the test vault was removed.
+
+What it means:
+- One save on the stick costs about 236 ms (plain safe write today: 165 ms): 1.4x, at the low end of the estimate.
+- A burst of 50 saves is one commit: 230 ms instead of about 50 x 130-165 ms = 6.5-8 s file by file.
+- A cleanup costs about 40 ms per removed file on the stick; maintain() every 16 commits removes about 15 index files,
+  so about 0.6 s in the write queue now and then.
+- Open stays far under the 10 s budget (32 ms with 230 notes).

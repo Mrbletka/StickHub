@@ -213,7 +213,8 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - v1 step 2, part 1 (store core, API, range reads, limits, cleanup in hub/vault/): **Done: 56e54c0** (tests only;
   not wired into the hub; all 190 tests pass on the phone 2026-11-04).
 - v1 step 2, part 2: fixes C1-C4 (f219982), `vault verify` / `vault export` (1dd1b93), trash and compaction with
-  maintain() (abf92c4), probe 10 store part (this commit; phone run pending). Next: the probe 10 numbers, then step 3.
+  maintain() (abf92c4), probe 10 store part (27fb91c; run on the phone 2026-11-04: all tests pass, one stick save 236 ms, pull test
+  old state with no problems; docs/PROBES.md run 9). Next: v1 step 3 (data API).
 - Store rules: a .vx file is never changed in place; index files are committed by rename; the newest index that
   decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
   queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files
