@@ -16,7 +16,7 @@ import { errorAnswer } from './errors.mjs';
 /** Limits (design 8.1). Tests may lower the times. */
 export const LIMITS = Object.freeze({
   socketPath: 107, headerBytes: 16 * 1024, bodyBytes: 32 * 1024 * 1024, jsonBytes: 1024 * 1024,
-  treeEntries: 20_000, connections: 32, requestMs: 60_000, pollMs: 25_000, events: 1000,
+  treeEntries: 20_000, connections: 64, requestMs: 60_000, pollMs: 25_000, events: 1000,
 });
 
 /** A socket path that is too long for sun_path, or a folder we cannot use: a clear error, no crash. */

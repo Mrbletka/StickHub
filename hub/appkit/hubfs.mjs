@@ -93,36 +93,70 @@ function common(p) {
 
 // ---- socket mode ----
 
-function socketPrimitives(socketPath, token) {
+/**
+ * At most `max` calls at once; the rest wait in the order they came (the hub closes connections above its limit).
+ * A call with keys (the paths a change touches) also waits while an earlier call with one of those keys runs or
+ * waits, so changes to one path reach the hub in the order they were made.
+ */
+function limiter(max) {
+  const queue = [];
+  const busy = new Map(); // key -> running calls
+  let running = 0;
+  const pump = () => {
+    const held = new Set(); // keys of earlier calls that still wait
+    for (let i = 0; i < queue.length && running < max;) {
+      const it = queue[i];
+      if (it.keys.some((k) => busy.has(k) || held.has(k))) { for (const k of it.keys) held.add(k); i++; continue; }
+      queue.splice(i, 1);
+      running++;
+      for (const k of it.keys) busy.set(k, (busy.get(k) || 0) + 1);
+      it.fn().then(it.ok, it.fail).finally(() => {
+        running--;
+        for (const k of it.keys) { const n = busy.get(k) - 1; if (n) busy.set(k, n); else busy.delete(k); }
+        pump();
+      });
+    }
+  };
+  return (keys, fn) => new Promise((ok, fail) => { queue.push({ keys, fn, ok, fail }); pump(); });
+}
+
+function socketPrimitives(socketPath, token, o = {}) {
   const tok = typeof token === 'function' ? token : () => token;
-  const call = (method, route, { json, body, query = '', headers = {} } = {}) => new Promise((ok, fail) => {
+  const timeoutMs = o.timeoutMs ?? 60_000;
+  const limit = limiter(o.maxInFlight ?? 8);
+  // One request on its own connection. Every request ends within timeoutMs: a stalled one fails with EIO
+  // (hubCode TIMEOUT) and frees its place. A write that timed out may still have landed.
+  const send = (method, route, { json, body, query = '', headers = {} } = {}) => new Promise((ok, fail) => {
     const payload = body ?? (json ? Buffer.from(JSON.stringify(json)) : null);
     const req = http.request({ socketPath, method, path: `/v1/${route}${query}`, agent: false,
       headers: { authorization: `Bearer ${tok()}`, ...(payload ? { 'content-length': payload.length } : {}), ...headers } }, (res) => {
       const parts = [];
       res.on('data', (b) => parts.push(b));
       res.on('end', () => {
+        clearTimeout(timer);
         const buf = Buffer.concat(parts);
         if (res.statusCode === 200) { ok({ buf, headers: res.headers }); return; }
         let j = {};
         try { j = JSON.parse(buf.toString('utf8')); } catch { j = {}; }
         fail(hubError(j.code || 'ERROR', j.message || `The hub answered ${res.statusCode}.`, res.statusCode));
       });
-      res.on('error', (e) => fail(hubError('IO', e.message)));
+      res.on('error', (e) => { clearTimeout(timer); fail(hubError('IO', e.message)); });
     });
-    req.on('error', (e) => fail(hubError('IO', `The hub cannot be reached (${e.code || 'error'}).`)));
+    const timer = setTimeout(() => { req.destroy(); fail(hubError('TIMEOUT', 'The hub did not answer in time.')); }, timeoutMs);
+    req.on('error', (e) => { clearTimeout(timer); fail(hubError('IO', `The hub cannot be reached (${e.code || 'error'}).`)); });
     req.end(payload ?? undefined);
   });
-  const j = async (route, json) => JSON.parse((await call('POST', route, { json })).buf.toString('utf8'));
+  const call = (method, route, o2 = {}) => limit(o2.keys || [], () => send(method, route, o2));
+  const j = async (route, json, keys) => JSON.parse((await call('POST', route, { json, keys })).buf.toString('utf8'));
   return {
     tree: async (prefix) => (await j('tree', { path: prefix })).entries,
     stat: (path) => j('stat', { path }),
     read: async (path) => (await call('POST', 'read', { json: { path } })).buf,
-    write: async (path, buf, ifMatch) => JSON.parse((await call('PUT', 'write', { body: buf, query: `?path=${encodeURIComponent(path)}`,
+    write: async (path, buf, ifMatch) => JSON.parse((await call('PUT', 'write', { keys: [path], body: buf, query: `?path=${encodeURIComponent(path)}`,
       headers: ifMatch === undefined ? {} : { 'x-hub-if-match': ifMatch === null ? 'none' : ifMatch } })).buf.toString('utf8')),
-    mkdirp: (path) => j('mkdir', { path }),
-    move: (from, to) => j('move', { from, to }),
-    remove: (path) => j('remove', { paths: [path] }),
+    mkdirp: (path) => j('mkdir', { path }, [path]),
+    move: (from, to) => j('move', { from, to }, [from, to]),
+    remove: (path) => j('remove', { paths: [path] }, [path]),
     /** Changes as an async iterator: {seq, kind, path, id?, from?}, or {kind: 'lost'} (list again). Reconnects. */
     async *watch(o = {}) {
       let since = o.since ?? null; // null: start from now
@@ -130,7 +164,8 @@ function socketPrimitives(socketPath, token) {
         if (o.signal?.aborted) return;
         let r;
         try {
-          r = JSON.parse((await call('GET', 'events', { query: since === null ? '' : `?since=${since}` })).buf.toString('utf8'));
+          // the long poll has its own connection, outside the limit: a watch must never hold back reads and writes
+          r = JSON.parse((await send('GET', 'events', { query: since === null ? '' : `?since=${since}` })).buf.toString('utf8'));
         } catch (e) {
           if (e.hubCode === 'UNAUTHORIZED' || e.hubCode === 'LOCKED') throw e; // anything else: the hub is away, retry
           await new Promise((res) => setTimeout(res, o.retryMs ?? 1000));
@@ -236,12 +271,14 @@ function filePrimitives(root) {
 
 /**
  * A hubfs for given settings (tests, or several vaults). Default: from the environment.
- * @param {{socket?: string, token?: string|(() => string), dir?: string}} [o]  token: a function is asked each request
+ * @param {{socket?: string, token?: string|(() => string), dir?: string, maxInFlight?: number, timeoutMs?: number}} [o]
+ *   token: a function is asked each request; maxInFlight: requests at once (8, the rest wait in order);
+ *   timeoutMs: the longest a request may take (60 s)
  */
 export function createHubFs(o = {}) {
   const socket = o.socket ?? process.env.HUB_DATA_SOCKET;
   const token = o.token ?? process.env.HUB_DATA_TOKEN;
-  if (socket && token) return { mode: 'hub', ...common(socketPrimitives(socket, token)) };
+  if (socket && token) return { mode: 'hub', ...common(socketPrimitives(socket, token, o)) };
   return { mode: 'files', ...common(filePrimitives(resolve(o.dir ?? process.env.HUB_DATA_DIR ?? './data'))) };
 }
 

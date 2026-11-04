@@ -469,7 +469,7 @@ The wire format, limits, the error table, every difference from `node:fs` and th
 `hub/dataapi/README.md`. In short: HTTP over the socket (run dir 0700, socket 0600, path up to 107 bytes, a stale
 socket removed only if nobody answers); one random 32-byte token per app start, compared in constant time, the same
 401 for missing, wrong, malformed or revoked tokens; `Origin` refused; 423 on every route while locked; app paths
-checked, then prefixed with `<appId>/`; bodies up to 32 MiB; 32 connections; 60 s request timeout; events: last 1000
+checked, then prefixed with `<appId>/`; bodies up to 32 MiB; 64 connections (the client keeps 8 requests per app in flight, the rest queue); 60 s request timeout; events: last 1000
 per app, long poll up to 25 s, `lost` to list again. Any process of the same Android user can open the socket but
 needs the token, and `/proc/<pid>/environ` is readable by that user: malware on an unlocked phone stays out of scope
 (section 2). Next: 3b (procman gives apps the socket and a token; `HUB_DATA_DIR` goes away when the vault is on), 3c

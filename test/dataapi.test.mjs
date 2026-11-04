@@ -125,10 +125,10 @@ test('bodies: 33 MiB is 413, a stalled body is cut off, the server stays up', as
   await s.done();
 });
 
-test('40 connections at once: no crash, the server answers after', async () => {
+test('70 connections at once: no crash, the server answers after', async () => {
   const s = await setup();
-  const all = await Promise.allSettled(Array.from({ length: 40 }, () => req(s.sock, { token: s.token, body: { path: 'x' } })));
-  assert.ok(all.filter((r) => r.status === 'fulfilled').length >= 32);
+  const all = await Promise.allSettled(Array.from({ length: 70 }, () => req(s.sock, { token: s.token, body: { path: 'x' } })));
+  assert.ok(all.filter((r) => r.status === 'fulfilled').length >= 64);
   assert.equal((await req(s.sock, { token: s.token, body: { path: 'x' } })).status, 404);
   await s.done();
 });

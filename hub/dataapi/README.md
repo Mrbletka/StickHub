@@ -47,7 +47,7 @@ inside the caller's folder. Names that differ only in case: 409 `CASE_CLASH`.
 | header size | 16 KiB |
 | write body | 32 MiB (413 above); JSON bodies 1 MiB |
 | tree answer | 20,000 entries (413 above: ask for a smaller folder) |
-| connections | 32 at once (more are closed) |
+| connections | 64 at once (more are closed); the client keeps at most 8 per app |
 | request timeout | 60 s to send the whole request (a stalled body is cut off) |
 | long poll | 25 s |
 | events kept | 1000 per app |
@@ -74,7 +74,14 @@ One file, `node:` imports only (a test checks). `readFile(p, enc?)`, `writeFile(
 `stat(p)` (`isFile()`, `isDirectory()`, `size`, `id`, `mtimeMs`), `tree(prefix)`, `watch({since?, signal?})`.
 With `HUB_DATA_SOCKET` + `HUB_DATA_TOKEN` it talks to the hub; without them it uses plain files under
 `HUB_DATA_DIR` or `./data` (same functions, same errors, atomic writes, sha256 ids). `createHubFs({socket, token,
-dir})` makes one with given settings (`token` may be a function).
+dir, maxInFlight, timeoutMs})` makes one with given settings (`token` may be a function).
+
+Many calls at once (socket mode): at most 8 requests are in flight (`maxInFlight`); the rest wait in a queue, first
+come first served, so `Promise.all` over 300 reads or writes works (the hub closes connections above 64). Changes to
+one path (`writeFile`, `rename` from and to, `rm`, `mkdir`) reach the hub in the order they were called, even when a
+big write is still being sent; a read is not ordered against a change it did not wait for (as with `node:fs`).
+Every request ends within `timeoutMs` (60 s): a stalled one fails with `EIO` (`hubCode: 'TIMEOUT'`) and frees its
+place in the queue. A write that timed out may still have landed. `watch()` has its own connection, outside the 8.
 
 Error codes: `ENOENT`, `EEXIST`, `ENOTEMPTY`, `EISDIR`, `ENOTDIR`, `EFBIG`, `EINVAL` (bad path or input), `EACCES`
 (401/403), `EIO` (503, 500, hub away), `ELOCKED` (423), `ECONFLICT` (ifMatch failed). The hub's code is in
