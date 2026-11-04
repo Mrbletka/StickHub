@@ -486,8 +486,8 @@ pack and one index (group commit). The header is the only file changed in place:
 | Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
 | Cleanup | - | about 40-55 ms per removed file (29 index files: 1.2 s) |
 | maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10, one big task) |
-| the same, in steps (job 2b) | - | 21.6 s in 29 steps; a save behind it waited 553 ms (run 11; target < 1.5 s met) |
-| steady state: 100 saves, automatic maintenance on | - | median 390 ms, p95 1610 ms, max 1702 ms (run 11; target max < 1.5 s missed) |
+| the same, in steps (job 2b) | - | 21.6 s in 29 steps; a save behind it waited 553 ms (run 11; target < 1.5 s met). Job 2c: run 12 pending (target about 10-12 s) |
+| steady state: 100 saves, automatic maintenance on | - | median 390 ms, p95 1610 ms, max 1702 ms (run 11; target max < 1.5 s missed). Job 2c: run 12 pending |
 Run 10 showed a save waiting behind the whole maintain() task. Job 2b cuts maintenance into steps (8.6): a save
 waits for at most one step, about 10 deleted files (0.55 s on the stick) or one compaction call.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
@@ -534,12 +534,28 @@ the stick is plugged in.
 - Runs inside the store's write queue, as `maintain()`: purge trash older than 30 days (store clock), compact if worth
   it, then clean up. The store starts it after the first commit of a session and then every 4 commits, in steps
   (below); with nothing to do it does no I/O.
-- Compaction (`compact.mjs`, one commit per call, stoppable between files): candidates are packs whose live bytes are
-  under 50% of their size, and live packs under 1 MiB; it runs only with at least 4 candidates or 4 MiB of dead bytes
-  in them, cheapest first, up to 16 MiB of live bytes and 12 packs per call. The live pieces move into new packs of about 8 MiB;
-  every affected file is read whole through the checked path (content id) before the commit; extents of files and
-  trash are updated; a piece shared by several files (dedupe) moves once; a file over several packs moves piece by
-  piece and keeps its part numbers. The old packs stay while the previous index uses them; a later full cleanup
+- Compaction (`compact.mjs`, one commit per call, stoppable between packs), by size tiers (job 2c): a pack whose
+  live bytes are under 50% of its size is a candidate any time (that frees dead space). A mostly live pack under
+  1 MiB sits in a **size tier** by its live bytes: tier 0 under 4 KiB, tier 1 under 16 KiB, tier 2 under 64 KiB,
+  tier 3 under 256 KiB, tier 4 under 1 MiB (x4 per tier). Only a tier with at least 4 packs is merged, lowest tier
+  first. 4 packs of a tier make a pack of a higher tier, so a pack that was just merged is not rewritten until its
+  own tier is full again, and a byte moves about once per tier. Packs of 1 MiB and more that are mostly live stay.
+  It runs with a full tier, at least 4 mostly dead packs, or 4 MiB of dead bytes in them; cheapest first, up to
+  16 MiB of live bytes and 12 packs per call. Cost bound (test `vault-store-tiers`): 300 saves of 2 KB over 20 notes,
+  alone or on top of 230 notes, move at most 8x the saved bytes (5 tiers, plus at most one move when a pack falls
+  under 50% live, which is smaller than the dead bytes it frees); measured 2.7x. Before tiers, each automatic run in
+  a vault under 1 MiB rewrote all live notes (on top of 230 notes about 58x the saved bytes). At most 3 packs per
+  tier stay unmerged, so a small vault keeps up to about 15 packs in use.
+- Reading for compaction (job 2c): each chosen pack is opened once and only the pieces that move are read, in offset
+  order, so each segment is decrypted at most once and segments without a moving piece are not read (compaction
+  reads at most the bytes ever written to `_packs`). Every segment is authenticated (AES-GCM, STREAM, length
+  checked in segment 0); every moving piece must be listed in its pack's table of contents under its content id,
+  offset and length; when **every** piece of a file moves, the file's content id (HMAC) is checked as before. **A file
+  that only partly moves is no longer read whole, so its whole-file content id is not checked during compaction**
+  (its moving pieces are still authenticated and checked against the table of contents; `vault verify` checks
+  every content id). The live pieces move into new packs of about 8 MiB; extents of files and trash are updated; a
+  piece shared by several files (dedupe) moves once; a file over several packs moves piece by piece and keeps its
+  part numbers. The old packs stay while the previous index uses them; a later full cleanup
   removes them. Never while there are problems (full cleanup would be refused, so new packs would only fill the disk).
 - `emptyTrash(ids?)` removes trash entries for good (all, or some); `purgeTrash()` the ones older than 30 days.
 - Removes `.vx` files no index refers to (leftovers of a pull or crash) and old index files beyond the 2 newest.
@@ -556,7 +572,8 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
 - **Capped cleanup runs.** One run deletes at most `cleanupMax` files (default 10) and says `more: true` when work is
   left. The order is unchanged: index `.part` files, valid index files beyond the 2 newest, unused packs, header
   `.part` files, and the header backup completion last (it counts as one unit of the cap). Every run starts with its
-  own scan and the same checks as before; nothing is carried from one run to the next.
+  own scan and the same checks as before; the only thing carried from one run to the next is the index cache below,
+  which never decides the 2 newest indexes.
 - **Bounded compaction.** One call reads at most `maxPacks` packs (default 12) and at most `maxBytes` live bytes
   (16 MiB), and makes one commit.
 - **Steps.** A step is one unit of work: a due trash purge (one commit), one compaction call, or one capped cleanup
@@ -564,7 +581,7 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
   summed, plus `steps`), but each step is its own item in the write queue, queued only after the previous step
   finished. Saves that arrive meanwhile are already in the queue, so they go first. A chain ends when nothing is
   left, or when a run is blocked, busy (reads in progress) or fails. It never spins: compaction steps continue only
-  while the number of candidates or their dead bytes goes down; cleanup steps do at most as much work as the chain's
+  while the number of packs in use or the dead bytes go down; cleanup steps do at most as much work as the chain's
   first cleanup run saw (a run reports `left`, the units it saw and did not do), so saves that arrive all the time
   cannot keep a chain going (it ends with `more: true`; the next maintenance takes the rest); and every chain stops
   after 50,000 steps.
@@ -580,15 +597,20 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
   or `cleanup()` stops after its current step. So `close()` takes at most about one step.
 - **The 200-file guard** runs one capped cleanup run inside the commit, then refuses if still at the limit.
 - **Unfinished header writes** (`#dirty`) are cleared only by a full run that ended with `more: false`.
-- **Cost of a run.** Every capped run scans (decrypts) all index files again and lists `_packs`: with a big backlog
-  (say 100 index files) that scan is repeated in each step. A scan cached between runs would be cheaper, but it
-  would carry state from one run to the next; not built. Open: below 1 MiB of live data the merged pack stays a
-  compaction candidate (live packs under 1 MiB), so in a small vault each automatic chain with 4 new small packs
-  rewrites all live data (about 210 ms for 500 KiB and 234 notes on a fast disk). Run 11: it does matter. These
-  compaction steps are the slow saves of the steady state (max 1.7 s on the stick, 2.4 s on the phone), and the
-  repeated scans double the total work of a big backlog (21.6 s instead of 10.0 s). Fix ideas, not built: merge only
-  packs of similar size, read only the moving pieces instead of whole files, scan only index files that are new
-  since the last run.
+- **Index cache (job 2c).** Run 11 showed the repeated scans doubling the total work of a big backlog (21.6 s
+  instead of 10.0 s on the stick): every capped run decrypted all index files again. So the store keeps the decoded
+  older index files by name and size between cleanup runs (`replica.scanIndexes` with a cache; cleanup only). Rules:
+  every run still lists `_index` and does its own block checks; a new name, or a name with another size, is decoded;
+  a cached entry that ends up among the 2 newest is decoded again, until the 2 newest valid indexes of the run are
+  fresh, so the pack rule ("the 2 newest valid indexes of this run's scan") never trusts the cache; only older files
+  come from it, and those are only ever deleted; a file that fails to decrypt is never cached; a gone name is
+  dropped. An entry holds only size, seq and replica. Open, `verify` and `export` always read everything fresh.
+  What the cache cannot see: an older file changed in place with the same size after this store read it (our code
+  never does that; a name is written once). A fresh open or `verify` sees it. Measured on a container disk (backlog
+  of 102 index + 97 pack files): one big run 255 ms, capped runs before 1296 ms, with the cache 410 ms.
+- **Run 11 (before job 2c)** missed two targets: the steady state (max 1.7 s on the stick: each automatic run in a
+  small vault rewrote all live notes) and the worst-case total (21.6 s: repeated scans). Job 2c (tiers, reading
+  each segment once, the index cache) is for both; run 12 measures it.
 
 ## 9. Speed: plug-in to open in 10 s or less
 "Open" = the hub page shows the tiles, unlocked.
@@ -791,6 +813,11 @@ cleanupMax 1 with a backlog of 30 files and saves all the time (no save more tha
 one deletion, `close()` does not wait for pending steps, the automatic chain gives way to `maintain()`; compaction
 reads at most 12 packs per call. Probe 10 gained the stepped worst case, the steady state with automatic
 maintenance on, and the pull test with automatic maintenance on.
+
+### v1 step 2c: faster maintenance: built
+As described in 8.6: size tiers (`compact.tierOf`), compaction reads each chosen pack once (`PackReader.withPack`,
+each segment decrypted at most once), and the index cache for cleanup runs. On a container disk probe 10 went from
+steady p95 248 ms / max 426 ms to 29 / 33 ms, and the worst-case maintain from 1977 ms to 663 ms. Stick: run 12.
 
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),

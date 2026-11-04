@@ -16,13 +16,13 @@ a key, a passphrase, a paper code or any other input value.
 | `header.mjs` | `vault.json`: build, strict parse (before any KDF), MAC, unlock with passphrase or paper code |
 | `vx.mjs` | `.vx` files (packs, index): STREAM segments, per-file keys, Padme padding; buffers and streams |
 | `vfs.mjs` | file I/O for the store, with a guard for fault injection (unplug tests) |
-| `replica.mjs` | one vault folder: header copies, index scan (newest valid wins), index commit, a new vault |
+| `replica.mjs` | one vault folder: header copies, index scan (newest valid wins; a cache of older files for cleanup), index commit, a new vault |
 | `indexfile.mjs` | index and pack contents, checked field by field after decryption |
-| `vxread.mjs`, `store-read.mjs` | range reads (only the needed segments), whole reads, 4 MiB chunked reads |
+| `vxread.mjs`, `store-read.mjs` | range reads (only the needed segments), one pack at a time (`withPack`), whole reads, 4 MiB chunked reads |
 | `store-ops.mjs` | file operations on a draft (check first, then change) |
 | `packs.mjs` | packs and the next index for a commit (decoded back once before it is written) |
 | `queue.mjs` | the write queue: one thing at a time; changes of the same tick share one commit |
-| `cleanup.mjs`, `compact.mjs` | cleanup (full or light) in capped runs; compaction (at most 12 packs per call) |
+| `cleanup.mjs`, `compact.mjs` | cleanup (full or light) in capped runs; compaction by size tiers (at most 12 packs per call, each segment read once) |
 | `maintain.mjs` | maintenance in steps: each step its own queue item, so a save waits for one step at most |
 | `verify.mjs`, `export.mjs` | `vault verify` and `vault export` (CLI in `hub/cli-vault.mjs`) |
 | `store.mjs` | the store API: `Store.create`, `openVaultFolder`, read/write/move/trash/maintain/verify |

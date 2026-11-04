@@ -218,7 +218,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   save, one cleanup before NEEDS_REPAIR, #dirty kept until a full cleanup, probe 10 maintenance step.
   **Job 2 (v1 step 2) done.**
 - Job 2b, maintenance in small steps (maintain.mjs, capped cleanup runs, compaction at most 12 packs per call,
-  probe 10 stepped worst case + steady state). Next: probe 10 run 11 on the phone, then v1 step 3 (data API).
+  probe 10 stepped worst case + steady state); run 11 on the phone: a save behind maintain() waits 553 ms.
+- Job 2c, faster maintenance: compaction by size tiers, each pack segment decrypted at most once, a cache of older
+  index files for cleanup runs (never for the 2 newest). Next: probe 10 run 12 on the phone, then v1 step 3.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
@@ -229,7 +231,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   at all when the order of the indexes is unclear. maintain() (purge 30-day trash, compact, clean up) runs after the
   first commit of a session and every 4 commits, in steps (design 8.6): each step (a purge, one compaction call of at
   most 12 packs, one cleanup run of at most 10 files) is its own queue item, so a save waits for one step at most;
-  every cleanup run does its own scan and checks. close() drops automatic steps that have not started. Compaction
+  every cleanup run does its own scan and checks (older index files may come from a cache by name and size; the 2
+  newest valid ones are always read fresh; open, verify and export never use it). Compaction merges only packs of
+  one size tier (at least 4), reads only the moving pieces, and checks a file's content id when all of it moves. close() drops automatic steps that have not started. Compaction
   never runs while there are problems. At 200 files in _index commits are refused (NEEDS_REPAIR) after one capped
   cleanup run. File times are never used.
 - `node hub/cli.mjs vault verify|export` (hub/cli-vault.mjs): passphrase only from the terminal (no echo), never argv,
