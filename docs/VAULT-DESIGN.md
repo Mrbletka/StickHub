@@ -612,7 +612,7 @@ the refusal), and one that prints nothing and exits 0 (what `termux-keystore sig
 6. Migration (plain backup tar first, verify, then remove plain copies), change passphrase, new paper code, rekey on
    request, START-HERE.txt and `cli.mjs setup` for a new phone (passphrase). Probe 10, v1 part, on the phone.
 
-### v1 step 1: built (commit: see AGENT-GUIDE.md, Build order)
+### v1 step 1: built (commit 4640777)
 Crypto building blocks in `hub/vault/` (overview in `hub/vault/README.md`). Tests only: nothing is wired into the hub.
 KDFs (Argon2id 256 MiB t=3 p=4, scrypt fallback, limits checked before running, HKDF, NFKC), passphrase and recovery
 slots, paper code, generated passphrases (EFF list, credited), header build / strict parse / MAC / unlock, `.vx`

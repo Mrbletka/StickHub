@@ -209,7 +209,7 @@ Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` 
 Encrypted vault: docs/VAULT-DESIGN.md (reviewed; decisions in its section 0, build order in section 11).
 v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build one step at a time and stop after each.
 - v1 step 1, crypto building blocks in hub/vault/ (KDFs, slots, paper code, generated passphrases, header, .vx files):
-  **Done: pending** (tests only; nothing is wired into the hub yet). Next: v1 step 2 (store, `vault export`, `vault verify`).
+  **Done: 4640777** (tests only; nothing is wired into the hub yet). Next: v1 step 2 (store, `vault export`, `vault verify`).
 - Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,
   passphrases or paper codes; a VaultError message never contains an input value (test/vault-nosecrets.test.mjs).
   zero() keys when done. KDF settings and everything else read from a stick are checked before any KDF runs.
