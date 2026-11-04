@@ -48,6 +48,37 @@ async function dirFsync(dir) {
   }
 }
 
+/** What a maintain() call did, in one line. */
+function what(m) {
+  if (!m.purged && !m.compacted && !m.cleanup) return 'nothing to do';
+  const c = m.compacted;
+  const comp = !c ? 'not worth it' : c.done ? `${c.packs} packs (${Math.round(c.bytes / 1024)} KiB live) into ${c.newPacks}` : c.reason;
+  const cl = m.cleanup ? `${m.cleanup.level}, removed ${m.cleanup.removed.indexes} index + ${m.cleanup.removed.packs} pack files` : 'not needed';
+  return `purged ${m.purged}; compacted: ${comp}; cleanup: ${cl}`;
+}
+
+/** maintain() after many saves, a second one (nothing to do), the delay one save feels behind it, then a verify. */
+async function maintenance(r, label, s) {
+  for (let i = 0; i < 100; i++) await s.write(`mt/note${i % 20}.md`, NOTE(i));
+  let t = performance.now();
+  const m1 = await s.maintain();
+  r.add(`${label}: maintain after 100 saves over 20 notes`, `${ms(t)} ms: ${what(m1)}`);
+  t = performance.now();
+  const m2 = await s.maintain();
+  r.add(`${label}: maintain again`, `${ms(t)} ms: ${what(m2)}`);
+  for (let i = 0; i < 100; i++) await s.write(`mt/note${i % 20}.md`, NOTE(100 + i));
+  t = performance.now();
+  const running = s.maintain(); // not awaited: a save comes in while it runs
+  const t1 = performance.now();
+  await s.write('mt/felt.md', NOTE(999));
+  const felt = ms(t1);
+  const m3 = await running;
+  r.add(`${label}: one save while maintain runs`, `${felt} ms (maintain ${ms(t)} ms: ${what(m3)})`);
+  const v = await s.verify();
+  r.add(`${label}: verify (full) after maintenance`, v.ok ? 'OK' : `PROBLEMS ${JSON.stringify({ header: v.header, damaged: v.indexes.damaged.length, packs: v.packs, files: v.files })}`);
+  r.add(`${label}: problems after maintenance`, JSON.stringify(s.status().problems));
+}
+
 /** All measurements on one folder. */
 async function measure(r, label, base) {
   const root = join(base, 'vault10');
@@ -98,6 +129,7 @@ async function measure(r, label, base) {
     const packs = size('_packs');
     r.add(`${label}: file sizes`, `index ${size('_index').join(', ')} bytes; packs ${packs.length} files, smallest ${packs[0]}, largest ${packs[packs.length - 1]} bytes`);
     r.add(`${label}: problems`, JSON.stringify(s.status().problems));
+    await maintenance(r, label, s);
     await s.close();
     r.add(`${label}: folder fsync`, await dirFsync(dir));
   } finally {
