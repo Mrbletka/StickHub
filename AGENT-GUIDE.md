@@ -101,6 +101,13 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
 - The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
 - Saves: an app saves to HUB_DATA_DIR through its own server. Browser storage (IndexedDB, localStorage) is NOT synced.
 
+## Doctor
+`node hub/cli.mjs doctor [--json]` (hub/doctor.mjs) checks Node and git versions, termux-api (commands and the
+Termux:API app), storage permission, the Termux:Widget shortcuts, the stick, the hub port, the watcher, token and
+settings, and prints what is missing with the fix. Read-only. Each check is a small function with its outside effects
+passed in (test/doctor.test.mjs fakes a phone). It is the base of the setup guide for a new phone: add a check there
+whenever setup gets a new step.
+
 ## Making apps
 - Start every app with `node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`. It makes apps/<id>/ with
   app.json, a starter, a placeholder icon.svg and a README.md with the rules. It never overwrites an existing folder.

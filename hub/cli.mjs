@@ -10,6 +10,7 @@
 //   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
 //   node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]   a new app from a starter
+//   node hub/cli.mjs doctor [--json]     what this device has and lacks for StickHub, and how to fix it
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +26,7 @@ import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs'
 import { openUrl } from './platform/termux.mjs';
 import { watchCommand, widgetInstall } from './cli-watch.mjs';
 import { createApp } from './scaffold.mjs';
+import { runDoctor, formatReport, realCtx } from './doctor.mjs';
 import { loadApp } from './apps.mjs';
 import { loadEngines } from './engines.mjs';
 
@@ -40,7 +42,8 @@ const USAGE = `Usage:
   node hub/cli.mjs hub stop
   node hub/cli.mjs watch start|stop|status
   node hub/cli.mjs widget install
-  node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`;
+  node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]
+  node hub/cli.mjs doctor [--json]`;
 
 /** Split argv into words and --flags. */
 function parse(argv) {
@@ -50,6 +53,7 @@ function parse(argv) {
     const a = argv[i];
     if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
     else if (a === '--data-on-stick') flags.dataOnStick = true;
+    else if (a === '--json') flags.json = true;
     else if (a === '--name' || a === '--mount' || a === '--engine') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
@@ -215,6 +219,11 @@ async function main(argv) {
   if (a === 'code' && b === 'pull-from-stick') return pull(flags);
   if (a === 'login') return login(flags);
   if (a === 'new') return newApp(b, flags);
+  if (a === 'doctor') {
+    const results = await runDoctor(realCtx(ROOT, stickhubHome()));
+    console.log(flags.json ? JSON.stringify(results, null, 1) : formatReport(results));
+    return results.some((r) => r.state === 'fail') ? 1 : 0;
+  }
   if (a === 'watch') return watchCommand(b, ROOT, stickhubHome());
   if (a === 'widget' && b === 'install') return widgetInstall(ROOT);
   if (a === 'open') return open(flags);

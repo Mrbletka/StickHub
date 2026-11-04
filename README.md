@@ -12,6 +12,7 @@ sh probes/run-all.sh         # phone-only measurements (Termux), result goes to 
 
 ## On the phone (first time)
 ```sh
+cd ~/StickHub && node hub/cli.mjs doctor        # what is missing (termux-api, storage, widget, stick, ...) and how to fix it
 cd ~/StickHub && node hub/cli.mjs open          # starts the hub in the background and opens it (logged in)
 node hub/cli.mjs widget install                 # home-screen shortcuts for Termux:Widget
 ```
