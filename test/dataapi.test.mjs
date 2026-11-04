@@ -188,9 +188,9 @@ test('watch() reconnects after a hub restart and reports lost', async () => {
   let api = await createDataApi({ socketPath: sock, getStore: () => t.store });
   let token = api.issue('notebook');
   const fs = createHubFs({ socket: sock, token: () => token });
-  const it = fs.watch({ retryMs: 50 })[Symbol.asyncIterator]();
+  const ac = new AbortController(); // a failed assert must not leave the watch retrying forever
+  const it = fs.watch({ retryMs: 50, since: 0, signal: ac.signal })[Symbol.asyncIterator](); // since 0: a fresh vault, no race
   const first = it.next();
-  await new Promise((r) => setTimeout(r, 50));
   await fs.writeFile('a.md', 'a');
   assert.equal((await first).value.path, 'a.md');
   const next = it.next();
@@ -199,12 +199,15 @@ test('watch() reconnects after a hub restart and reports lost', async () => {
   api = await createDataApi({ socketPath: sock, getStore: () => t.store });
   token = api.issue('notebook');
   assert.equal((await next).value.kind, 'lost', 'a new hub: list again');
-  const after = it.next();
-  await new Promise((r) => setTimeout(r, 100));
-  await fs.writeFile('b.md', 'b');
-  assert.equal((await after).value.path, 'b.md');
-  await it.return();
-  await api.close();
+  try {
+    const after = it.next();
+    await new Promise((r) => setTimeout(r, 300)); // the client asks the new hub with since = its seq (0)
+    await fs.writeFile('b.md', 'b');
+    assert.equal((await after).value.path, 'b.md');
+  } finally {
+    ac.abort();
+    await api.close();
+  }
   await t.store.close();
 });
 

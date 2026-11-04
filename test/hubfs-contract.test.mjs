@@ -82,7 +82,7 @@ for (const [mode, make] of Object.entries(modes)) {
     const { fs, done } = await make();
     try {
       const ac = new AbortController();
-      const it = fs.watch({ signal: ac.signal })[Symbol.asyncIterator]();
+      const it = fs.watch({ signal: ac.signal, since: 0 })[Symbol.asyncIterator](); // since 0: a fresh vault
       const first = it.next(); // starts the watch
       await new Promise((r) => setTimeout(r, 50));
       await fs.writeFile('a.md', 'a');
