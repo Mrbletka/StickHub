@@ -20,7 +20,7 @@ export const KDF_LIMITS = Object.freeze({
 
 /** Most characters a passphrase may have (a longer one is refused before any work). */
 export const PASSPHRASE_MAX = 1024;
-/** Fewest characters (after NFKC) for a passphrase the user chose (decision 5). */
+/** Fewest characters (canonical form) for a passphrase the user chose (decision 5). */
 export const OWN_PASSPHRASE_MIN = 20;
 
 /** True if this Node has Argon2 (Node 24.7+). */
@@ -56,27 +56,37 @@ export function checkKdf(k) {
 }
 
 /**
- * NFKC-normalize a passphrase (the same Polish letters typed on another keyboard give the same bytes) and return its
- * UTF-8 bytes. The caller zeroes the buffer when done.
+ * The canonical form of a passphrase (decided by Fabian): NFKC (the same Polish letters typed on another keyboard
+ * give the same text), then trim both ends and collapse every run of whitespace (spaces, tabs, newlines, no-break
+ * spaces) to one space. Case is kept: "Abc" and "abc" are different passphrases.
+ * @param {unknown} s
+ * @returns {string}
+ */
+export function canonicalPassphrase(s) {
+  if (typeof s !== 'string' || !s.isWellFormed()) fail('BAD_INPUT', 'passphrase: must be text');
+  if (s.length > PASSPHRASE_MAX) fail('BAD_INPUT', `passphrase: more than ${PASSPHRASE_MAX} characters`);
+  const n = s.normalize('NFKC').replace(/\s+/gu, ' ').trim();
+  if (!n.length) fail('BAD_INPUT', 'passphrase: empty');
+  return n;
+}
+
+/**
+ * The canonical passphrase (see canonicalPassphrase) as UTF-8 bytes, the input of the KDF.
+ * The caller zeroes the buffer when done.
  * @param {unknown} s
  * @returns {Buffer}
  */
 export function normalizePassphrase(s) {
-  if (typeof s !== 'string' || !s.isWellFormed()) fail('BAD_INPUT', 'passphrase: must be text');
-  if (s.length > PASSPHRASE_MAX) fail('BAD_INPUT', `passphrase: more than ${PASSPHRASE_MAX} characters`);
-  const n = s.normalize('NFKC');
-  if (!n.length) fail('BAD_INPUT', 'passphrase: empty');
-  return Buffer.from(n, 'utf8');
+  return Buffer.from(canonicalPassphrase(s), 'utf8');
 }
 
 /**
- * Throw WEAK_PASSPHRASE if a passphrase the user chose is shorter than 20 characters (counted after NFKC).
+ * Throw WEAK_PASSPHRASE if a passphrase the user chose is shorter than 20 characters, counted in its canonical form.
  * Generated passphrases (5 words) do not go through this check.
  * @param {string} s
  */
 export function checkOwnPassphrase(s) {
-  normalizePassphrase(s);
-  const chars = [...s.normalize('NFKC')].length;
+  const chars = [...canonicalPassphrase(s)].length;
   if (chars < OWN_PASSPHRASE_MIN) fail('WEAK_PASSPHRASE', `Choose at least ${OWN_PASSPHRASE_MIN} characters, or use the generated words.`);
 }
 

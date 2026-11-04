@@ -129,7 +129,9 @@ DK (32 random bytes, one per epoch)
 ### 4.2 Passphrase slot (a)
 - Exactly one. Works on any device with the hub (the "any device" slot). The phone's Node has Argon2id **(p9)**, as
   do official Node 24 builds (Windows later). For a device without it, the slot would be made with scrypt instead.
-- Passphrase normalized with NFKC (Polish letters typed on another keyboard give the same bytes), then Argon2id with a
+- Passphrase canonical form (decided): NFKC (Polish letters typed on another keyboard give the same bytes), trim both
+  ends, collapse every run of whitespace (spaces, tabs, newlines, no-break spaces) to one space, no case folding.
+  Then Argon2id with a
   16-byte random salt and `associatedData = vault id + slot id` (or scrypt with the salt). The slot records its KDF.
 - The KDF settings are read from the stick before unlocking, so they are checked: Argon2id m <= 1 GiB, t <= 10,
   p <= 8; scrypt N <= 2^20. Anything else is refused (a tampered stick must not make the phone run out of memory).
@@ -139,7 +141,7 @@ DK (32 random bytes, one per epoch)
     64.6 bits), picked by rejection sampling on 16-bit random values (uniform, no modulo bias), joined by spaces. The list ships as `hub/vault/wordlist-eff-large.txt` with the words only (the
     dice numbers removed); it is licensed CC BY 3.0 US, so the file header and the README credit the Electronic
     Frontier Foundation, link the source and the license, and say what was changed.
-  - An own passphrase is accepted only with 20 or more characters (counted after NFKC).
+  - An own passphrase is accepted only with 20 or more characters (counted in the canonical form).
 - KDF: Argon2id m = 256 MiB, t = 3, p = 4 (decision 6).
 
 ### 4.3 Device slot (b) **(p9)**
@@ -658,6 +660,4 @@ All twelve review questions are decided (section 0). Left for later measurement,
    the stick.
 2. Probe 10 (v2): plug-in to open on both paths; whether the page ever needs reopening after the fingerprint box.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
-4. Found in step 1: NFKC does not trim. A keyboard that adds a trailing space (or a double space between words) makes
-   the passphrase wrong. Trim and collapse spaces before the KDF? Must be decided before the first real vault, since
-   it changes the key.
+4. Decided (job 2, Part A): trim both ends, collapse whitespace runs to one space, no case folding (4.2).

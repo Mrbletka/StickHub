@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCipheriv, createDecipheriv, argon2Sync, scryptSync } from 'node:crypto';
 import {
-  ARGON2ID_DEFAULT, SCRYPT_DEFAULT, checkKdf, normalizePassphrase, checkOwnPassphrase, passphraseKey, hkdf, hasArgon2,
+  ARGON2ID_DEFAULT, SCRYPT_DEFAULT, checkKdf, normalizePassphrase, canonicalPassphrase, checkOwnPassphrase, passphraseKey, hkdf, hasArgon2,
 } from '../hub/vault/kdf.mjs';
 import { subkeys } from '../hub/vault/keys.mjs';
 
@@ -83,7 +83,22 @@ test('NFKC: the same Polish word typed two ways gives the same bytes', () => {
   assert.throws(() => normalizePassphrase(42), { code: 'BAD_INPUT' });
 });
 
-test('an own passphrase needs 20 characters after NFKC', () => {
+test('canonical passphrase: trimmed, whitespace runs collapsed, case kept', () => {
+  const want = 'red fox jumps';
+  for (const typed of ['red fox jumps ', ' red fox jumps', 'red  fox jumps', 'red\tfox\njumps', 'red\u00a0fox\u00a0jumps',
+    '\t red \r\n fox   jumps \n', 'red\u3000fox\u2003jumps']) {
+    assert.equal(canonicalPassphrase(typed), want, JSON.stringify(typed));
+    assert.deepEqual(normalizePassphrase(typed), Buffer.from(want));
+  }
+  assert.notEqual(canonicalPassphrase('Red fox jumps'), want, 'no case folding');
+  assert.equal(canonicalPassphrase('redfoxjumps'), 'redfoxjumps', 'spaces are not removed, only collapsed');
+  assert.equal(canonicalPassphrase('zażółć  gęślą '.normalize('NFD')), 'zażółć gęślą'.normalize('NFC'), 'Polish letters in two spellings');
+  assert.throws(() => canonicalPassphrase(' \t\n '), { code: 'BAD_INPUT' });
+});
+
+test('an own passphrase needs 20 characters in its canonical form', () => {
+  assert.throws(() => checkOwnPassphrase('  nineteen    characters  '), { code: 'WEAK_PASSPHRASE' }); // 19 after collapsing
+  checkOwnPassphrase('twenty  characters ok\n');
   assert.throws(() => checkOwnPassphrase('nineteen characters'), { code: 'WEAK_PASSPHRASE' });
   checkOwnPassphrase('twenty characters ok');
   checkOwnPassphrase('źdźbło źdźbło źdźbło'); // 20 letters and spaces, more bytes

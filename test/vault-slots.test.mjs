@@ -26,6 +26,12 @@ test('the right passphrase and the right paper code open their slots', async () 
   assert.deepEqual(openRecoverySlot(v.rs, v.paperCode.toLowerCase().replace(/-/g, ' '), ctx), v.dk);
 });
 
+test('the passphrase opens with stray spaces, tabs or a trailing newline, but not in another case', async () => {
+  const typed = `  ${v.passphrase.replace(/ /g, '  \t')}\n`;
+  assert.deepEqual(await openPassphraseSlot(v.ps, typed, ctx), v.dk);
+  await assert.rejects(openPassphraseSlot(v.ps, v.passphrase.replace(/ /g, ''), ctx), { code: 'WRONG_SECRET' });
+});
+
 test('a wrong passphrase or another valid paper code fails', async () => {
   await assert.rejects(openPassphraseSlot(v.ps, `${v.passphrase}!`, ctx), { code: 'WRONG_SECRET' });
   await assert.rejects(openPassphraseSlot(v.ps, v.passphrase.toUpperCase(), ctx), { code: 'WRONG_SECRET' });
