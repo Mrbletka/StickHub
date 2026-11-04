@@ -2,8 +2,8 @@
 
 Status: **design only, nothing is built.** Claude and Fabian review this first.
 Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, run 7) and are marked **(p9)**.
-Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. One p9 point is still unclear:
-where the fingerprint prompt shows when it is started from the background (section 5, open question 1).
+Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not confirmed yet: whether the
+fingerprint box has a pattern button, and what is in front after the touch (section 5).
 
 ## 1. Summary
 - Today the app data on the stick (`HUB/data/`) is plain files. Whoever finds the stick reads everything.
@@ -164,18 +164,22 @@ Measured **(p9, termux-api 0.60.0)**:
   secure hardware; for a key made with `-u N` the auth is required and enforced by that hardware.
 - It is a **time window only**: the key signs for N seconds after the phone was unlocked with the fingerprint or the
   pattern, and refuses after that. No prompt shows when it signs.
-- A successful `termux-fingerprint` also opens the window. Its prompt offers the pattern too. (Tested: the fingerprint
-  in the prompt, and the pattern on the lock screen. That the pattern typed *in the prompt* opens the window is
-  expected; probe 10 checks it.) The prompt takes a title (`-t`), so it can say "Unlock StickHub".
-- Unclear: started from the background while the StickHub app was in front, the prompt worked (fingerprint accepted,
-  sign ok, 4.3 s), but it was not seen "over StickHub". Where it showed, and what was in front afterwards, matters
-  for the plug-in flow (open question 1).
+- A successful `termux-fingerprint` (the "fingerprint box") also opens the window. It takes a title (`-t`), so it
+  can say "Unlock StickHub". Whether the box has a pattern button is **not confirmed** (the probe's question was
+  unclear; its wording is fixed).
+- Started from the background while StickHub is in front, the box works (fingerprint accepted, sign ok, 4.3 s), but
+  Android **switches to the Termux:API app** to show it (Fabian, after the run). Not known yet: what is in front
+  after the touch.
 
 The build:
 - Key: RSA-2048, `generate -u 30` (open question 1).
 - Unlock: first try `sign` (1.2 s). If the phone was unlocked in the last 30 s (you usually unlock it, then plug in
   the stick or tap the widget), that is all: no extra touch. If `sign` gives nothing:
-  `termux-fingerprint -t "Unlock StickHub"` (fingerprint, or the pattern in the same prompt), then `sign` again.
+  `termux-fingerprint -t "Unlock StickHub"`, then `sign` again, then `termux-open-url` to bring StickHub back to the
+  front (the box switched to the Termux:API app).
+- Pattern instead of the finger: lock the phone and unlock it with the pattern (p9: this opens the window), then tap
+  **Unlock** in the hub within 30 s; its first `sign` then works. A pattern button in the box, if there is one,
+  works too.
 - Cancelled or failed: the passphrase or the paper code.
 
 Honest strength:
@@ -307,8 +311,8 @@ Writes: header (2 copies) on both sides, packs and index on both sides, the devi
 ### 7.2 Unlock (daily)
 1. The hub starts locked (widget, or the watcher at plug-in). The page shows the lock screen; no app can start.
 2. If this phone has a device slot, the hub starts the unlock at once, in parallel with opening the page:
-   `termux-keystore sign` (no touch if the phone was unlocked in the last 30 s; else `termux-fingerprint`, then sign
-   again) -> HKDF -> unwrap DK -> check the header MAC ->
+   `termux-keystore sign` (no touch if the phone was unlocked in the last 30 s; else the fingerprint box, which
+   switches to the Termux:API app, then sign again and bring the page back) -> HKDF -> unwrap DK -> check the header MAC ->
    read the newest index (phone replica; in data-on-stick mode the stick's) -> tiles.
 3. Cancelled or failed: buttons **Fingerprint**, **Passphrase**, **Paper code**.
 4. Phone copy mode needs no stick to unlock. After unlocking, a plugged-in stick syncs in the background.
@@ -454,7 +458,7 @@ the stick is plugged in.
 | Stick found -> hub started (cold) | 1.0-1.1 s (runs 4, 6) | same |
 | Stick found -> page open, logged in | about 2-3 s (runs 4, 6) | same, in parallel with the unlock |
 | Keystore sign (phone unlocked in the last 30 s) | - | 1.1-1.3 s **(p9)** |
-| Otherwise: failed sign + prompt and touch + sign again | - | 1.2 + about 3 + 1.2 s (`termux-fingerprint` took 3.2 s with the touch, **p9**) |
+| Otherwise: failed sign, fingerprint box and touch, sign again, bring the page back | - | 1.2 + about 3 + 1.2 + 1.5-2 s (`termux-fingerprint` 3.2 s with the touch, **p9**; `termux-open-url` 1.5-2 s, run 1) |
 | Unwrap DK, check header | - | under 10 ms (HKDF 32 us on the phone, **p9**) |
 | Read + decrypt the index | - | about 0.1-0.2 s on the stick (estimate) |
 | **Plug-in -> open** | **6.6 s** (phone copy), **9.1 s** (data on the stick, cold hub) | see the two cases below |
@@ -463,14 +467,17 @@ The unlock starts as soon as the hub runs, in parallel with the page opening (2-
 from the header copy on the phone, so it does not wait for the stick.
 - **Fast path** (the phone was unlocked in the last 30 s, the usual case when you pick it up and plug in the stick):
   one sign, 1.2 s, hidden behind the page load. Plug-in -> open stays close to today: about 6.6-9.5 s (estimate).
-- **Prompt path** (unlocked longer ago): about 5.4 s after the hub starts. Plug-in -> open about 10-13 s (estimate):
-  **over the goal**.
-To avoid or shorten the prompt path:
+- **Fingerprint-box path** (unlocked longer ago): about 7-7.5 s after the hub starts, because the box switches to
+  the Termux:API app and the page must be brought back. Plug-in -> open about 12-15 s (estimate): **over the goal**,
+  and the screen jumps StickHub -> Termux:API -> StickHub.
+To avoid or shorten the fingerprint-box path:
 1. Keep the hub running and unlocked: the widget tap starts it and unlocks it on the fast path (you just unlocked the
    phone to tap). Plug-in then needs no unlock at all, unless the hub auto-locked.
 2. Poll mountinfo every 1 s instead of 2 s (0.7 ms per read): 0.5 s less on average.
-3. Probe 10 (after the build) measures both paths, and whether two Termux:API calls (open the page, show the prompt)
-   can run at the same time.
+3. Option: try the sign before opening the page. That costs about 1 s on the fast path, but on the box path the
+   screen goes Termux:API -> StickHub only once (open question 1).
+4. Probe 10 (after the build) measures both paths, what is in front after the touch, and whether the box has a
+   pattern button.
 The passphrase path is slower (typing + 0.9 s Argon2id) and is not the daily path.
 
 ## 10. Tests
@@ -517,10 +524,10 @@ the refusal), and one that prints nothing and exits 0 (what `termux-keystore sig
 
 ## 12. Open questions
 1. **Device slot** (p9: time window, opened by the fingerprint or the pattern). (a) Fast path with `-u 30` (no touch
-   if the phone was unlocked in the last 30 s), or always show the prompt (then `-u 10`; plug-in -> open about
-   10-13 s)? (b) Fabian: in p9's background step, where did the prompt show, and what was in front after the touch,
-   StickHub or Termux? If Termux comes to the front, the hub must bring the page back (one more `termux-open-url`,
-   about 1.5 s).
+   if the phone was unlocked in the last 30 s), or always show the fingerprint box (then `-u 10`; plug-in -> open about
+   12-15 s)? (b) At plug-in: open the page and try the sign at the same time (fastest when no box is needed), or
+   sign first and open the page after (about 1 s slower then, but on the box path the screen does not jump back
+   and forth)?
 2. **Phone copy encrypted too** (this design) so "locked" holds on the phone? The alternative keeps plain files on
    the phone and apps unchanged, but then only the stick is locked.
 3. **Apps use the data API** instead of `HUB_DATA_DIR` (Notebook port, sample apps). Agreed?

@@ -160,13 +160,14 @@ Node 24.22.1 with OpenSSL 3.6.5, termux-api 0.60.0. Only sha256 prefixes of sign
 | right after a fingerprint unlock, and again at once | signs; no prompt |
 | 19 s later | refused |
 | `termux-fingerprint` success (3.2 s with the touch), then sign | signs: the prompt opens the window |
-| that prompt | offers the pattern too; options `-t -d -s -c` |
+| the fingerprint box | options `-t -d -s -c`; a pattern button: **not confirmed** (the question was unclear; wording fixed) |
 | right after a pattern unlock (lock screen) | signs |
-| `termux-fingerprint` started while StickHub was in front | success after 4.3 s, sign ok; the prompt was not seen over StickHub (to clarify) |
+| `termux-fingerprint` started while StickHub was in front | Android **switched to the Termux:API app** to show the box (Fabian, after the run); success after 4.3 s, sign ok |
 | test keys | deleted (3 left by an interrupted earlier run were deleted first) |
 
 ### Decision
 The Keystore gate is a time window only: a key signs for N seconds after a fingerprint or pattern unlock, or after a
 successful `termux-fingerprint`. Device slot in docs/VAULT-DESIGN.md section 5: RSA-2048 with `-u 30`; try `sign`
-first, show the prompt only when it gives nothing; the adapter accepts exactly 256 bytes. Passphrase slot: Argon2id
+first, show the fingerprint box only when it gives nothing, then bring the hub page back (the box takes the screen
+away from StickHub); the adapter accepts exactly 256 bytes. Passphrase slot: Argon2id
 256 MiB, t=3, p=4 (0.9 s). AES-256-GCM stays (10x the stick's speed).

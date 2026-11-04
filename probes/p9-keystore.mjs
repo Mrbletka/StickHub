@@ -171,7 +171,8 @@ async function authKey(r, ans, alias) {
   r.add(`RSA-2048 key with -u ${VALID_S} (needs an unlock): generate`, g.ok ? `ok, ${secs(g.ms)}` : `FAILED: ${g.why}`);
   if (!g.ok) { ans.authKey = `cannot make one: ${g.why}`; return; }
   r.add('  details', await detail(alias));
-  console.log('\nIf a fingerprint prompt ever pops up by itself, touch the sensor and say so at the next question.');
+  console.log('\nBelow, "fingerprint box" = the system window that asks for your finger (or pattern).'
+    + '\nIf one ever pops up by itself, use it and say so at the next question.');
   const signs = [];
   const step = async (label) => {
     const s = await sign(alias, 'SHA256withRSA', CH1);
@@ -185,19 +186,19 @@ async function authKey(r, ans, alias) {
   await ask('Lock the phone (power button). Unlock it with your FINGERPRINT, come back here and press Enter at once.');
   const a1 = await step('right after a fingerprint unlock');
   await step('again at once');
-  const prompted = await ask('Did a fingerprint or pattern prompt pop up while it signed? (y/n)');
-  r.add('  prompt while signing', prompted || '(no answer)');
+  const prompted = await ask('After your Enter it signed twice. Did a fingerprint box pop up during that? (y/n)');
+  r.add('  fingerprint box while signing', prompted || '(no answer)');
   await wait(WAIT_S, 'the window should close');
   const a3 = await step(`${WAIT_S} s later, no unlock`);
 
   if (hasCmd('termux-fingerprint')) {
-    await ask('Press Enter: a fingerprint prompt opens. Touch the sensor.');
+    await ask('Press Enter: a fingerprint box opens here. Touch the sensor.');
     const f = await fingerprint();
     r.add('  termux-fingerprint', f.text);
     const a4 = await step('sign right after termux-fingerprint');
     ans.fingerprintOpens = !f.ok ? 'unclear (the fingerprint was not accepted)'
       : isSig(a3) ? 'unclear (the window was still open)' : isSig(a4) ? 'yes' : 'no';
-    r.add('  prompt offers the pattern', await ask('Did that prompt offer the pattern (or a "use pattern" button)? (y/n)') || '(no answer)');
+    r.add('  fingerprint box has a pattern button', await ask('In that fingerprint box, was there a button to use the pattern instead (e.g. "Use pattern")? (y/n)') || '(no answer)');
     await wait(WAIT_S, 'the window should close');
   }
   await ask('Lock the phone. Unlock it with the PATTERN (swipe up, draw it; not the finger), come back and press Enter at once.');
@@ -206,14 +207,16 @@ async function authKey(r, ans, alias) {
 
   if (hasCmd('termux-fingerprint')) {
     await wait(WAIT_S, 'the window should close');
-    await ask('Press Enter, then switch to the StickHub app within 5 s. A fingerprint prompt should open over it: touch the sensor, then come back here.');
+    await ask('Press Enter, then switch to the StickHub app within 5 s and wait there. A fingerprint box will open: touch the sensor, then come back here.');
     await sleep(6000);
     const f = await fingerprint();
     r.add('  termux-fingerprint from the background', f.text);
     const a6 = await step('sign right after it');
-    const seen = await ask('Did the prompt show over StickHub? (y/n)');
-    r.add('  prompt showed over StickHub', seen || '(no answer)');
-    ans.background = `prompt seen: ${seen || '?'}, fingerprint ${f.ok ? 'ok' : 'not ok'}, sign ${isSig(a6) ? 'ok' : 'refused'}`;
+    const where = await ask('Where did the fingerprint box show? s = on top of StickHub, a = it switched to the Termux:API app or Termux, n = no box');
+    const after = await ask('After the touch, what was in front? s = StickHub, t = Termux or Termux:API, o = something else');
+    r.add('  where the fingerprint box showed', where || '(no answer)');
+    r.add('  in front after the touch', after || '(no answer)');
+    ans.background = `box: ${where || '?'}, after the touch: ${after || '?'}, fingerprint ${f.ok ? 'ok' : 'not ok'}, sign ${isSig(a6) ? 'ok' : 'refused'}`;
   }
 
   const sigs = signs.filter(isSig);
@@ -281,7 +284,7 @@ export async function run9(r) {
   r.add('  auth asked', ans.window ?? 'not tested');
   r.add('  termux-fingerprint opens the window', ans.fingerprintOpens ?? 'not tested');
   r.add('  pattern unlock opens the window', ans.patternOpens ?? 'not tested');
-  r.add('  prompt over the StickHub app', ans.background ?? 'not tested');
+  r.add('  fingerprint box from the background', ans.background ?? 'not tested');
   r.add('  node', ['argon2id', 'scrypt', 'hkdf-sha256', 'aes-256-gcm', 'chacha20-poly1305', 'aes-256-gcm-siv']
     .map((k) => `${k} ${ans[k] ?? '?'}`).join(', '));
 }
