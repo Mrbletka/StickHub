@@ -484,7 +484,11 @@ pack and one index (group commit). The header is the only file changed in place:
 | Delete 120 files, rename a folder of 300 notes | 14.1 s; 300 renames | one commit, index only (no pack): at most about 0.24 s |
 | Find what changed on the stick | read and hash every file | read one index file |
 | Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
-| Cleanup | - | about 40 ms per removed file (29 index files: 1.2 s) |
+| Cleanup | - | about 40-55 ms per removed file (29 index files: 1.2 s) |
+| maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10). Every 16 commits: about 1.7 s (estimate) |
+Open point (run 10): a save waits behind the whole maintain() task. Before the data API makes saves interactive,
+maintenance on the stick should not block saves for seconds (for example: delete in small slices, letting waiting
+saves go first). Not built.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
 everything that touches many files. Pull test: pulled mid-saves, the stick reopened with the last finished save, no
 problems, cleanup and verify fine.

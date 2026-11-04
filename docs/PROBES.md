@@ -219,3 +219,20 @@ What it means:
 - A cleanup costs about 40 ms per removed file on the stick; maintain() every 16 commits removes about 15 index files,
   so about 0.6 s in the write queue now and then.
 - Open stays far under the 10 s budget (32 ms with 230 notes).
+
+## Run 10 - 2026-11-04: probe 10 again, with the maintenance step (code fe2f8d2)
+`node --test` passed first. The steps of run 9 gave about the same numbers (one stick save median 229 ms, p95 251 ms;
+burst of 50 in one commit 232 ms; open with 230 notes 32 ms). New, on the same vault after them:
+| Step | Stick (exFAT) | Phone (control) |
+|---|---|---|
+| maintain() after 100 saves over 20 notes | **10.0 s**: 54 packs (490 KiB live) compacted into 1, full cleanup removed 101 index + 80 pack files | 2.9 s, the same work |
+| maintain() again | 5 ms: nothing to do | 8 ms: nothing to do |
+| one save started while maintain() runs (100 more saves before) | **13.6 s** (it waits for the whole maintain: 21 packs into 1, 101 index + 134 pack files removed) | 2.9 s |
+| full verify after maintenance | OK | OK |
+| problems | none | none |
+
+What it means: deleting a file on the stick costs about 55 ms (10 s / 181 files, 13.6 s / 235 files), and a save
+waits behind the whole maintenance task. This run let 100 saves pile up on purpose (automatic maintenance off); with
+it on (every 16 commits) a run removes about 15 index + 15 pack files, about 1.7 s of waiting on the stick. Still a
+stall a user can feel: see the note in docs/VAULT-DESIGN.md 8.3.
+
