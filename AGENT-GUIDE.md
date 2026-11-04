@@ -80,6 +80,7 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
 ~~~
 - Relative paths only, no "..". Validate strictly. One broken app must never break the hub: show the error on its tile.
 - The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
+- Saves: an app saves to HUB_DATA_DIR through its own server. Browser storage (IndexedDB, localStorage) is NOT synced.
 
 ## Engines (hub/engines/<id>.mjs)
 Contract: `export default { id, validate(manifest) -> string[] errors, async start(ctx) -> { port, url, stop(), exit?, pid? } }`.
@@ -90,27 +91,36 @@ Adding an engine = adding one file. Leave room for cli, custom command and game-
 - Hub port is fixed: 127.0.0.1:8787 (fixed so the PWA origin stays stable; fail loudly if taken). App ports 4100-4199.
 - One server for UI + API (JSON + SSE): list apps, start/stop/restart, status, live logs, stick + sync status. No framework.
 - Process manager: spawn, track, graceful stop (SIGTERM, then SIGKILL), no zombies, ring-buffer logs, clean up on hub exit.
-- Security (a web page in my browser can try to call 127.0.0.1): check Host and Origin, require a random per-install token on every state-changing call (cookie HttpOnly + SameSite=Strict, set from the first URL the watcher opens), launch only apps from validated manifests, never run commands taken from API input.
+  Later phase: remember app PIDs and clean up leftover app processes after a hard kill of the hub.
+- Security (a web page in my browser can try to call 127.0.0.1): check Host, Origin and Sec-Fetch-Site (done in phase 1), require a random per-install token on every state-changing call (cookie HttpOnly + SameSite=Strict, set from the first URL the watcher opens), launch only apps from validated manifests, never run commands taken from API input.
 
 ## UI (vanilla, mobile-first, installable PWA)
 - Dark, AMOLED black. Big tile grid: icon, name, status dot. Tap = start (if needed) and open. Long-press = menu (stop, restart, logs).
-- Status chip: stick connected / syncing / conflicts / stick has a different commit. Short "Stick connected" animation on plug-in.
+- Status chip: stick connected / syncing / conflicts / stick has a different commit. A tile whose data waits for sync shows "pending".
+- "Sync now" button. Short "Stick connected" animation on plug-in.
 - Safe-area insets, no hover-only features, CSS animations only, no heavy WebGL.
 - PWA: manifest (standalone, maskable icons 192/512), service worker caching the shell, friendly offline page ("Hub is not running") when the server is down.
 
 ## Sync
 Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
 - Code (hub/, apps/): git is the master. Phone -> stick copies a snapshot of the tracked files (`git ls-files`, no .git)
-  and writes the commit hash into stick.json. If the stick has a different commit than the phone, show it in the UI.
+  and writes the commit hash into stick.json. Automatic on plug-in ONLY if the clone has no uncommitted changes AND the
+  stick's commit is an older commit of the phone's history (`git merge-base --is-ancestor`). If the stick has a different
+  or newer commit: never overwrite, show it in the UI. Git calls go through the platform adapter (argument arrays, timeout).
   Stick -> phone code copy is an explicit command only. The watcher never pulls from GitHub by itself
   (setting `autoPull`, default false).
 - Data (data/): two-way, three-way by hash. sync-state.json keeps the last synced hash per file. Only one side changed:
   copy it. Both changed: keep both (name.conflict-<time>) and show it in the UI. Deletions go to .trash.
+  Runs automatically on plug-in and after an app stops, plus the "Sync now" button. A running app's data/<id> is skipped
+  and marked "pending"; it syncs when the app stops.
+- Stick speed (docs/PROBES.md): ~50 ms per directory operation, ~165 ms per safely written small file, 19 MB/s for big files.
+  Copy only changed files, keep the stick's hash list in one file, never re-hash the whole stick on each sync.
 - Verify every copy by hash. Limit parallelism (FUSE is slow). Show progress. Ignore .git, *.part, *.tmp, node_modules.
 - Lock file on the stick (HUB/.lock: device id + time) with stale-lock detection.
 
 ## Watcher (phone only, hub/watcher.mjs, runs in Termux)
-- Poll `termux-usb -l`. On a new device: wait up to ~15 s for the mount, run `termux-setup-storage`, read the links, look for HUB/stick.json.
+- Poll `/proc/self/mountinfo` every ~2 s (0.7 ms per read). `termux-usb -l` is too heavy to poll (1.2 s per call).
+  On a new /storage/<uuid> mount: look for <mount>/HUB/stick.json. `termux-setup-storage` only if probe 1 shows it is needed.
 - Found: start the hub if it is not running, sync data, open `termux-open-url http://127.0.0.1:8787/?t=<token>`.
   Stick removed: stop writing, finish or roll back the journal, update status.
 - Run under `termux-wake-lock`. CLI: `hub watch start|stop|status`.
