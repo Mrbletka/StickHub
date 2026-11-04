@@ -486,8 +486,8 @@ pack and one index (group commit). The header is the only file changed in place:
 | Open (read the index) | - | 40 ms empty, 32 ms with 230 notes (index 64 KiB) |
 | Cleanup | - | about 40-55 ms per removed file (29 index files: 1.2 s) |
 | maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10, one big task) |
-| the same, in steps (job 2b) | - | 21.6 s in 29 steps; a save behind it waited 553 ms (run 11; target < 1.5 s met). Job 2c: run 12 pending (target about 10-12 s) |
-| steady state: 100 saves, automatic maintenance on | - | median 390 ms, p95 1610 ms, max 1702 ms (run 11; target max < 1.5 s missed). Job 2c: run 12 pending |
+| the same, in steps | - | run 12 (job 2c): 16.0 s in 30 steps for 238 deleted files (run 11: 21.6 s); a save behind it waited 538 ms (target < 1.5 s met) |
+| steady state: 100 saves, automatic maintenance on | - | run 12: median 388 ms, p95 678 ms, max 933 ms (target max < 1.5 s met; run 11: max 1702 ms) |
 Run 10 showed a save waiting behind the whole maintain() task. Job 2b cuts maintenance into steps (8.6): a save
 waits for at most one step, about 10 deleted files (0.55 s on the stick) or one compaction call.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
@@ -610,7 +610,10 @@ waiting 13.6 s behind one big `maintain()`. So maintenance is cut into steps, an
   of 102 index + 97 pack files): one big run 255 ms, capped runs before 1296 ms, with the cache 410 ms.
 - **Run 11 (before job 2c)** missed two targets: the steady state (max 1.7 s on the stick: each automatic run in a
   small vault rewrote all live notes) and the worst-case total (21.6 s: repeated scans). Job 2c (tiers, reading
-  each segment once, the index cache) is for both; run 12 measures it.
+  each segment once, the index cache) is for both. **Run 12:** steady state max 933 ms (met); a save behind
+  maintain() 538 ms (met); worst-case total 16.0 s (target 10-12 s, missed). That total is now bound by deleting
+  files on the stick: 238 files at about 67 ms each, against about 55 ms in one big run; the same files in one big
+  run would take about 13 s (run 10 deleted only 181, see PROBES.md run 12). Open.
 
 ## 9. Speed: plug-in to open in 10 s or less
 "Open" = the hub page shows the tiles, unlocked.
@@ -817,7 +820,8 @@ maintenance on, and the pull test with automatic maintenance on.
 ### v1 step 2c: faster maintenance: built
 As described in 8.6: size tiers (`compact.tierOf`), compaction reads each chosen pack once (`PackReader.withPack`,
 each segment decrypted at most once), and the index cache for cleanup runs. On a container disk probe 10 went from
-steady p95 248 ms / max 426 ms to 29 / 33 ms, and the worst-case maintain from 1977 ms to 663 ms. Stick: run 12.
+steady p95 248 ms / max 426 ms to 29 / 33 ms, and the worst-case maintain from 1977 ms to 663 ms. Stick (run 12):
+steady max 933 ms, a save behind maintain() 538 ms, worst-case total 16.0 s (bound by deleting 238 files).
 
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),

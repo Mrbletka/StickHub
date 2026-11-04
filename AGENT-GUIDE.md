@@ -220,7 +220,8 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - Job 2b, maintenance in small steps (maintain.mjs, capped cleanup runs, compaction at most 12 packs per call,
   probe 10 stepped worst case + steady state); run 11 on the phone: a save behind maintain() waits 553 ms.
 - Job 2c, faster maintenance: compaction by size tiers, each pack segment decrypted at most once, a cache of older
-  index files for cleanup runs (never for the 2 newest). Next: probe 10 run 12 on the phone, then v1 step 3.
+  index files for cleanup runs (never for the 2 newest). Run 12 on the phone: steady max 933 ms, a save behind
+  maintain() 538 ms, worst-case total 16.0 s (deleting 238 files; target 10-12 s missed). Next: v1 step 3 (data API).
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

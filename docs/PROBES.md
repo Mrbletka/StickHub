@@ -263,3 +263,27 @@ What it means:
   the slow saves wait behind a compaction step. Below 1 MiB of live data the merged pack stays a candidate, so every
   automatic chain (every 4 commits) reads all about 234 notes whole and rewrites them (the open point in
   docs/VAULT-DESIGN.md 8.6).
+
+## Run 12 - 2026-11-04: probe 10 after faster maintenance (code 451925b, job 2c)
+`node --test` passed first. The steps of runs 9-11 gave about the same numbers (one stick save median 236 ms,
+p95 257 ms; burst of 50 in one commit 222 ms; open with 230 notes 31 ms; 5 MB write 458 ms). Same labels as run 11:
+| Step | Stick (exFAT) | Phone (control) | Run 11 stick |
+|---|---|---|---|
+| worst case: maintain() after 100 piled-up saves (automatic off) | **16.0 s** in 30 steps: 57 packs into 6, 106 index + 132 pack files removed | 3.8 s | 21.6 s |
+| one save started right behind maintain() | **538 ms** (maintain 12.9 s, 23 steps, 103 index + 98 pack files removed) | 206 ms | 553 ms |
+| steady: 100 saves over 20 notes, automatic on | median 388 ms, p95 **678 ms**, max **933 ms** | median 75 ms, p95 163 ms, max 178 ms | max 1702 ms |
+| files after the steady part | _index 4, _packs 11 | the same | _index 4, _packs 6 |
+| full verify after each part | OK | OK | OK |
+
+Pull test: the stick was pulled before the first save finished (0 saves done, then WRITE_FAILED). `p10-check.mjs`:
+opened with the old state (the empty vault, seq 1), no problems, cleanup had nothing to remove, verify OK, the
+test vault was removed. This pull did not hit a maintenance step.
+
+What it means:
+- Steady state: met (max 933 ms, target < 1.5 s). The automatic runs no longer rewrite all live notes.
+- A save behind maintain(): met (538 ms).
+- Worst-case total: 16.0 s, better than 21.6 s but above the 10-12 s target. It is now bound by deleting files:
+  238 files at 67 ms each, against about 55 ms per deleted file in one big run (run 10). Run 10's 10.0 s deleted
+  only 181 files, because one big maintain() keeps the old packs that the index before its compaction commit still
+  uses; stepped compaction makes several commits, so more old packs can go in the same call. The same 238 files in
+  one big run would take about 13 s. The steps cost about 12 ms per deleted file more (run 11: about 37 ms).
