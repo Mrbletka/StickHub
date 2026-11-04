@@ -28,13 +28,18 @@ const int = (v, what) => {
 export const routes = {
   async tree(c) {
     const { store, appId, body } = c;
+    const depth = int(body.depth, 'depth');
+    if (depth === 0 || depth > 64) throw new ApiError(400, 'BAD_INPUT', 'depth must be a whole number from 1 to 64.');
+    const base = body.path === undefined || body.path === '' ? appId : toVault(appId, body.path);
     let entries;
     try {
-      entries = store.tree(body.path === undefined || body.path === '' ? appId : toVault(appId, body.path));
+      entries = store.tree(base);
     } catch (e) {
-      if (e.code === 'NOT_FOUND' && !body.path) entries = []; // the app has not saved anything yet
+      if (e.code === 'NOT_FOUND' && base === appId) entries = []; // the app has not saved anything yet
       else throw e;
     }
+    // depth 1 = direct children only: a folder listing never sends what is below it
+    if (depth) entries = entries.filter((e) => e.path.split('/').length - base.split('/').length <= depth);
     if (entries.length > c.limits.treeEntries) throw new ApiError(413, 'TOO_BIG', 'Too many entries: ask for a smaller folder.');
     return { json: { entries: entries.map((e) => entryOut(appId, e)) } };
   },

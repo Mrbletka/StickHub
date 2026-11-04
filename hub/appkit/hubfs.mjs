@@ -2,10 +2,11 @@
 // so an app can copy it. Two modes, same functions, same errors:
 // - HUB_DATA_SOCKET + HUB_DATA_TOKEN set: talks to the hub's data API (the encrypted vault) over a Unix socket.
 // - otherwise: plain files under HUB_DATA_DIR (or ./data), for an app that runs alone. Writes are atomic
-//   (.part, fsync, rename); ifMatch uses a sha256 id; watch() sees only changes made through this process.
+//   (.part, fsync, rename); ifMatch uses a sha256 id that stat() reads the file for (tree() entries carry no id,
+//   readdir() never reads a file); watch() sees only changes made through this process.
 // Paths are app-relative: "notes/a.md". Errors carry fs-style codes (ENOENT, EEXIST, ENOTEMPTY, EISDIR, ENOTDIR,
 // EFBIG, EINVAL, EACCES, EIO) plus ELOCKED (vault locked) and ECONFLICT (ifMatch failed); err.hubCode keeps the
-// original code. Differences from node:fs are listed in docs/VAULT-DESIGN.md 8.1.
+// original code. Differences from node:fs are listed in hub/dataapi/README.md.
 
 import http from 'node:http';
 import fsp from 'node:fs/promises';
@@ -44,7 +45,14 @@ const statObj = (e) => ({ path: e.path, size: e.size ?? 0, id: e.id ?? null, mti
   isFile: () => e.kind === 'f', isDirectory: () => e.kind === 'd' });
 const direntObj = (name, kind) => ({ name, isFile: () => kind === 'f', isDirectory: () => kind === 'd' });
 
-/** The functions both modes share, built on six primitives (p: tree, stat, read, write, mkdirp, move, remove). */
+/** Depth for tree(): undefined = everything below, 1 = direct children only, ... */
+function depthOf(d) {
+  if (d === undefined) return undefined;
+  if (!Number.isSafeInteger(d) || d < 1 || d > 64) throw hubError('BAD_INPUT', 'depth must be a whole number from 1 to 64.');
+  return d;
+}
+
+/** The functions both modes share, built on primitives (p: tree, list, stat, read, write, mkdirp, move, remove, watch). */
 function common(p) {
   const api = {
     async readFile(path, o) {
@@ -58,14 +66,10 @@ function common(p) {
       return p.write(checkAppPath(path), buf, o.ifMatch === 'none' ? null : o.ifMatch); // 'none' or null: must not exist
     },
     async stat(path) { return statObj(await p.stat(checkAppPath(path))); },
+    /** One folder, not what is below it: a single request (hub) or a single directory read (plain files). */
     async readdir(path, o = {}) {
-      const base = isRoot(path) ? '' : checkAppPath(path);
-      if (base && (await p.stat(base)).kind !== 'd') throw hubError('NOT_DIR', 'That is not a folder.');
-      const kids = (await p.tree(base)).filter((e) => !e.path.slice(base ? base.length + 1 : 0).includes('/'));
-      return kids.map((e) => {
-        const name = e.path.slice(base ? base.length + 1 : 0);
-        return o.withFileTypes ? direntObj(name, e.kind) : name;
-      });
+      const kids = await p.list(isRoot(path) ? '' : checkAppPath(path));
+      return kids.map((e) => (o.withFileTypes ? direntObj(e.name, e.kind) : e.name));
     },
     async mkdir(path, o = {}) {
       checkAppPath(path);
@@ -81,10 +85,11 @@ function common(p) {
     async rm(path, o = {}) {
       let e;
       try { e = await p.stat(checkAppPath(path)); } catch (err) { if (err.code === 'ENOENT' && o.force) return; throw err; }
-      if (e.kind === 'd' && !o.recursive && (await p.tree(path)).length) throw hubError('NOT_EMPTY', 'The folder is not empty.');
+      if (e.kind === 'd' && !o.recursive && (await p.list(path)).length) throw hubError('NOT_EMPTY', 'The folder is not empty.');
       await p.remove(path);
     },
-    async tree(prefix) { return p.tree(isRoot(prefix) ? '' : checkAppPath(prefix)); },
+    /** Everything under a folder ({depth: 1}: its direct children). Plain-file mode: entries have no id (see stat). */
+    async tree(prefix, o = {}) { return p.tree(isRoot(prefix) ? '' : checkAppPath(prefix), depthOf(o.depth)); },
     watch: p.watch,
   };
   api.promises = api;
@@ -141,6 +146,7 @@ function socketPrimitives(socketPath, token, o = {}) {
         fail(hubError(j.code || 'ERROR', j.message || `The hub answered ${res.statusCode}.`, res.statusCode));
       });
       res.on('error', (e) => { clearTimeout(timer); fail(hubError('IO', e.message)); });
+      res.on('close', () => { clearTimeout(timer); if (!res.complete) fail(hubError('IO', 'The hub closed the connection.')); });
     });
     const timer = setTimeout(() => { req.destroy(); fail(hubError('TIMEOUT', 'The hub did not answer in time.')); }, timeoutMs);
     req.on('error', (e) => { clearTimeout(timer); fail(hubError('IO', `The hub cannot be reached (${e.code || 'error'}).`)); });
@@ -149,7 +155,8 @@ function socketPrimitives(socketPath, token, o = {}) {
   const call = (method, route, o2 = {}) => limit(o2.keys || [], () => send(method, route, o2));
   const j = async (route, json, keys) => JSON.parse((await call('POST', route, { json, keys })).buf.toString('utf8'));
   return {
-    tree: async (prefix) => (await j('tree', { path: prefix })).entries,
+    tree: async (prefix, depth) => (await j('tree', { path: prefix, ...(depth ? { depth } : {}) })).entries,
+    list: async (base) => (await j('tree', { path: base, depth: 1 })).entries.map((e) => ({ name: e.path.slice(base ? base.length + 1 : 0), kind: e.kind })),
     stat: (path) => j('stat', { path }),
     read: async (path) => (await call('POST', 'read', { json: { path } })).buf,
     write: async (path, buf, ifMatch) => JSON.parse((await call('PUT', 'write', { keys: [path], body: buf, query: `?path=${encodeURIComponent(path)}`,
@@ -191,34 +198,45 @@ function filePrimitives(root) {
     return map[e.code] ? hubError(map[e.code], 'File operation failed.') : e.hubCode ? e : hubError('IO', 'File operation failed.');
   };
   const idOf = (buf) => createHash('sha256').update(buf).digest('base64url');
-  const entry = async (p) => {
+  // meta: from fs.stat only, never reads the file. entry: meta plus the content id (reads the file).
+  const meta = async (p) => {
     const st = await fsp.stat(abs(p)).catch((e) => { throw io(e); });
-    if (st.isDirectory()) return { path: p, kind: 'd', mtime: st.mtimeMs };
-    return { path: p, kind: 'f', size: st.size, mtime: st.mtimeMs, id: idOf(await fsp.readFile(abs(p))) };
+    return st.isDirectory() ? { path: p, kind: 'd', mtime: st.mtimeMs } : { path: p, kind: 'f', size: st.size, mtime: st.mtimeMs };
   };
-  async function walk(base, out) {
-    const items = await fsp.readdir(base ? abs(base) : root, { withFileTypes: true }).catch((e) => { if (e.code === 'ENOENT' && !base) return []; throw io(e); });
-    for (const it of items.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (it.name.endsWith('.part')) continue;
+  const entry = async (p) => {
+    const m = await meta(p);
+    return m.kind === 'd' ? m : { ...m, id: idOf(await fsp.readFile(abs(p)).catch((e) => { throw io(e); })) };
+  };
+  const kindOf = (d) => (d.isDirectory() ? 'd' : d.isFile() ? 'f' : null); // links and others are left out
+  /** One directory read: [{name, kind}], sorted by name; *.part files are hidden. */
+  async function list(base) {
+    let items;
+    try { items = await fsp.readdir(base ? abs(base) : root, { withFileTypes: true }); } catch (e) {
+      if (e.code === 'ENOENT' && !base) return []; // nothing saved yet
+      throw io(e);
+    }
+    return items.filter((it) => kindOf(it) && !it.name.endsWith('.part')).map((it) => ({ name: it.name, kind: kindOf(it) }))
+      .sort((x, y) => (x.name < y.name ? -1 : 1));
+  }
+  async function walk(base, depth, out) {
+    for (const it of await list(base)) {
       const p = base ? `${base}/${it.name}` : it.name;
-      out.push(await entry(p));
-      if (it.isDirectory()) await walk(p, out);
+      out.push(await meta(p).catch((e) => { if (e.code === 'ENOENT') return null; throw e; })); // gone meanwhile: skip
+      if (it.kind === 'd' && (depth === undefined || depth > 1)) await walk(p, depth && depth - 1, out);
     }
     return out;
   }
   const exists = (p) => fsp.lstat(abs(p)).then(() => true, () => false);
   return {
-    tree: async (prefix) => {
-      if (prefix && (await entry(prefix)).kind !== 'd') throw hubError('NOT_DIR', 'That is not a folder.');
-      return (await walk(prefix, [])).sort((a, b) => (a.path < b.path ? -1 : 1));
-    },
+    tree: async (prefix, depth) => (await walk(prefix, depth, [])).filter(Boolean).sort((x, y) => (x.path < y.path ? -1 : 1)),
+    list,
     stat: entry,
     read: async (p) => {
-      if ((await entry(p)).kind === 'd') throw hubError('IS_DIR', 'That is a folder.');
+      if ((await meta(p)).kind === 'd') throw hubError('IS_DIR', 'That is a folder.');
       return fsp.readFile(abs(p)).catch((e) => { throw io(e); });
     },
     async write(p, buf, ifMatch) {
-      const cur = await entry(p).catch((e) => { if (e.code === 'ENOENT') return null; throw e; });
+      const cur = await (typeof ifMatch === 'string' ? entry : meta)(p).catch((e) => { if (e.code === 'ENOENT') return null; throw e; });
       if (cur?.kind === 'd') throw hubError('IS_DIR', 'That is a folder.');
       if (ifMatch !== undefined && (ifMatch === null ? cur !== null : cur?.id !== ifMatch)) throw hubError('CONFLICT', 'It was changed meanwhile.');
       await fsp.mkdir(dirname(abs(p)), { recursive: true }).catch((e) => { throw io(e); });
@@ -231,13 +249,13 @@ function filePrimitives(root) {
       return { id, size: buf.length };
     },
     async mkdirp(p) {
-      if (await exists(p) && (await entry(p)).kind !== 'd') throw hubError('EXISTS', 'A file with that name exists.');
+      if (await exists(p) && (await meta(p)).kind !== 'd') throw hubError('EXISTS', 'A file with that name exists.');
       await fsp.mkdir(abs(p), { recursive: true }).catch((e) => { throw io(e); });
       emit({ kind: 'mkdir', path: p });
       return {};
     },
     async move(from, to) {
-      await entry(from);
+      await meta(from);
       if (from === to) return {};
       if (to.startsWith(`${from}/`)) throw hubError('BAD_PATH', 'A folder cannot move into itself.');
       if (await exists(to)) throw hubError('EXISTS', 'Something with that name exists.');
@@ -247,7 +265,7 @@ function filePrimitives(root) {
       return {};
     },
     async remove(p) {
-      await entry(p);
+      await meta(p);
       await fsp.rm(abs(p), { recursive: true }).catch((e) => { throw io(e); });
       emit({ kind: 'remove', path: p });
       return {};

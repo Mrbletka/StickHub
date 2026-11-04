@@ -4,6 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
+import fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDataApi } from '../hub/dataapi/server.mjs';
@@ -78,6 +79,32 @@ for (const [mode, make] of Object.entries(modes)) {
     }
   });
 
+  test(`hubfs contract (${mode}): readdir is one folder, tree takes a depth`, async () => {
+    const { fs, done } = await make();
+    try {
+      for (const p of ['a.md', 'f/b.md', 'f/g/c.md', 'f/g/h/d.md']) await fs.writeFile(p, p);
+      await fs.mkdir('empty');
+      assert.deepEqual(await fs.readdir(''), ['a.md', 'empty', 'f']);
+      assert.deepEqual(await fs.readdir('.'), ['a.md', 'empty', 'f']);
+      assert.deepEqual((await fs.readdir('f', { withFileTypes: true })).map((e) => [e.name, e.isDirectory()]), [['b.md', false], ['g', true]]);
+      assert.deepEqual(await fs.readdir('empty'), []);
+      await assert.rejects(fs.readdir('nope'), { code: 'ENOENT' });
+      await assert.rejects(fs.readdir('a.md'), { code: 'ENOTDIR' });
+      assert.deepEqual((await fs.tree('f', { depth: 1 })).map((e) => e.path), ['f/b.md', 'f/g']);
+      assert.deepEqual((await fs.tree('f', { depth: 2 })).map((e) => e.path), ['f/b.md', 'f/g', 'f/g/c.md', 'f/g/h']);
+      assert.deepEqual((await fs.tree('', { depth: 1 })).map((e) => e.path), ['a.md', 'empty', 'f']);
+      assert.equal((await fs.tree('')).length, 8);
+      await assert.rejects(fs.tree('f', { depth: 0 }), { code: 'EINVAL' });
+      const file = (await fs.tree('f')).find((e) => e.path === 'f/b.md');
+      assert.deepEqual([file.kind, file.size], ['f', 6]);
+      // the content id: always from stat(); tree() has it only in the hub (plain files would have to read every file)
+      assert.equal(file.id, mode === 'hub' ? (await fs.stat('f/b.md')).id : undefined);
+      await assert.rejects(fs.rm('f'), { code: 'ENOTEMPTY' });
+    } finally {
+      await done();
+    }
+  });
+
   test(`hubfs contract (${mode}): watch sees changes in order`, async () => {
     const { fs, done } = await make();
     try {
@@ -97,3 +124,22 @@ for (const [mode, make] of Object.entries(modes)) {
     }
   });
 }
+
+test('plain-file mode: readdir and tree never read a file', async () => {
+  const fs = createHubFs({ dir: join(tmp(), 'data'), socket: '', token: '' });
+  for (let i = 0; i < 30; i++) await fs.writeFile(`notes/n${i}.md`, 'x'.repeat(1000));
+  const orig = { readFile: fsp.readFile, open: fsp.open };
+  let reads = 0;
+  fsp.readFile = (...a) => { reads++; return orig.readFile(...a); };
+  fsp.open = (...a) => { reads++; return orig.open(...a); };
+  try {
+    assert.equal((await fs.readdir('notes')).length, 30);
+    assert.equal((await fs.readdir('', { withFileTypes: true })).length, 1);
+    assert.equal((await fs.tree('')).length, 31);
+    assert.equal(reads, 0);
+    await fs.stat('notes/n1.md');
+    assert.equal(reads, 1, 'stat reads the file for its id');
+  } finally {
+    Object.assign(fsp, orig);
+  }
+});

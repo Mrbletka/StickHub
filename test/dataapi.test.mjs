@@ -24,12 +24,14 @@ function req(sock, { method = 'POST', path = '/v1/stat', token, headers = {}, bo
       ...(payload ? { 'content-length': payload.length } : {}), ...headers } }, (res) => {
       const parts = [];
       res.on('data', (b) => parts.push(b));
-      res.on('end', () => {
+      const done = () => {
         const buf = Buffer.concat(parts);
         let json = null;
         try { json = JSON.parse(buf.toString('utf8')); } catch { json = null; }
         ok({ status: res.statusCode, json, buf });
-      });
+      };
+      res.on('end', done);
+      res.on('close', done); // a refused upload: the server may close before the client read the whole answer
     });
     r.on('error', fail);
     r.end(payload ?? undefined);
@@ -130,6 +132,21 @@ test('70 connections at once: no crash, the server answers after', async () => {
   const all = await Promise.allSettled(Array.from({ length: 70 }, () => req(s.sock, { token: s.token, body: { path: 'x' } })));
   assert.ok(all.filter((r) => r.status === 'fulfilled').length >= 64);
   assert.equal((await req(s.sock, { token: s.token, body: { path: 'x' } })).status, 404);
+  await s.done();
+});
+
+test('tree with depth 1 sends only the direct children; a bad depth is 400', async () => {
+  const s = await setup();
+  const fs = createHubFs({ socket: s.sock, token: s.token });
+  for (let i = 0; i < 20; i++) await fs.writeFile(`notes/sub/n${i}.md`, 'x');
+  await fs.writeFile('notes/top.md', 'x');
+  const shallow = await req(s.sock, { path: '/v1/tree', token: s.token, body: { path: 'notes', depth: 1 } });
+  assert.deepEqual(shallow.json.entries.map((e) => e.path), ['notes/sub', 'notes/top.md']);
+  assert.equal((await req(s.sock, { path: '/v1/tree', token: s.token, body: { path: 'notes' } })).json.entries.length, 22);
+  for (const depth of [0, -1, 1.5, '1', 65]) {
+    const r = await req(s.sock, { path: '/v1/tree', token: s.token, body: { path: 'notes', depth } });
+    assert.deepEqual([r.status, r.json.code], [400, 'BAD_INPUT'], String(depth));
+  }
   await s.done();
 });
 

@@ -19,7 +19,7 @@ refused (403). Answers: JSON, or raw bytes for `read`. App paths only, like `not
 
 | Request | Body | Answer |
 |---|---|---|
-| `POST /v1/tree` | `{path?}` (no path = the app's whole folder) | `{entries: [{path, kind: 'f'\|'d', mtime, size?, id?}]}` |
+| `POST /v1/tree` | `{path?, depth?}` (no path = the app's whole folder; `depth: 1` = direct children only, 1 to 64) | `{entries: [{path, kind: 'f'\|'d', mtime, size?, id?}]}` |
 | `POST /v1/stat` | `{path}` | one entry |
 | `POST /v1/read` | `{path, start?, end?}` | raw bytes; headers `x-hub-id`, `x-hub-size` |
 | `PUT /v1/write?path=<url-encoded>` | raw bytes; header `x-hub-if-match: <id>` or `none` (must not exist) | `{id, size}` |
@@ -71,7 +71,7 @@ JSON `{code, message}`. Messages are fixed texts: never a token, a vault path or
 ## The client: hub/appkit/hubfs.mjs
 One file, `node:` imports only (a test checks). `readFile(p, enc?)`, `writeFile(p, data, {ifMatch})` (returns
 `{id, size}`), `readdir(p, {withFileTypes})`, `rename`, `mkdir(p, {recursive})`, `rm(p, {recursive, force})`,
-`stat(p)` (`isFile()`, `isDirectory()`, `size`, `id`, `mtimeMs`), `tree(prefix)`, `watch({since?, signal?})`.
+`stat(p)` (`isFile()`, `isDirectory()`, `size`, `id`, `mtimeMs`), `tree(prefix, {depth?})`, `watch({since?, signal?})`.
 With `HUB_DATA_SOCKET` + `HUB_DATA_TOKEN` it talks to the hub; without them it uses plain files under
 `HUB_DATA_DIR` or `./data` (same functions, same errors, atomic writes, sha256 ids). `createHubFs({socket, token,
 dir, maxInFlight, timeoutMs})` makes one with given settings (`token` may be a function).
@@ -98,6 +98,10 @@ Differences from `node:fs/promises`:
 - `mkdir` without `recursive` on an existing folder: `EEXIST`, as node; with `recursive` an existing file is `EEXIST`.
 - `stat().id` is the content id (hub: HMAC; plain files: sha256, computed by reading the file). `mtimeMs` is the
   hub's clock.
+- `readdir` lists one folder and nothing below it: one request with `depth: 1` (hub), one directory read (plain
+  files). It never reads a file. `tree()` entries carry `id` in the hub; in plain-file mode they have **no `id`**
+  (it would mean reading every file of the subtree): ask `stat(path)` for it. `tree(p, {depth: 1})` is the same
+  listing with sizes.
 - Plain-file mode: `ifMatch` is checked, then written; two processes can still race. `watch()` sees only changes made
   through this process.
 - Files up to 32 MiB through the API.
