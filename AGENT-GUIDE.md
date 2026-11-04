@@ -221,7 +221,12 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   probe 10 stepped worst case + steady state); run 11 on the phone: a save behind maintain() waits 553 ms.
 - Job 2c, faster maintenance: compaction by size tiers, each pack segment decrypted at most once, a cache of older
   index files for cleanup runs (never for the 2 newest). Run 12 on the phone: steady max 933 ms, a save behind
-  maintain() 538 ms, worst-case total 16.0 s (deleting 238 files; target 10-12 s missed). Next: v1 step 3 (data API).
+  maintain() 538 ms, worst-case total 16.0 s (deleting 238 files; target 10-12 s missed).
+- Job 3a, v1 step 3 part 1: a failed compaction step still cleans up (5918283); the data API server in hub/dataapi/
+  (see its README: wire format, limits, errors) and the client hub/appkit/hubfs.mjs (one file, node: only, socket
+  or plain-file mode), contract suite for both modes and hostile tests. NOT wired into the hub: the hub behaves as
+  before. Probe 11 (data API latency on the phone) still to do. Next: 3b procman starts apps with HUB_DATA_SOCKET +
+  HUB_DATA_TOKEN (scaffold copies hubfs into new apps); 3c the Notebook and sample apps use hubfs; job 4 lock screen.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

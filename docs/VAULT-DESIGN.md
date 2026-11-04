@@ -464,6 +464,17 @@ system. So:
 - Every write is atomic by construction, so every app behaves like `atomicData: true` and sync no longer waits for
   apps to stop ("pending" goes away).
 
+**Built (job 3a), not wired into the hub yet:** the server in `hub/dataapi/` and the client `hub/appkit/hubfs.mjs`.
+The wire format, limits, the error table, every difference from `node:fs` and the honest limits are in
+`hub/dataapi/README.md`. In short: HTTP over the socket (run dir 0700, socket 0600, path up to 107 bytes, a stale
+socket removed only if nobody answers); one random 32-byte token per app start, compared in constant time, the same
+401 for missing, wrong, malformed or revoked tokens; `Origin` refused; 423 on every route while locked; app paths
+checked, then prefixed with `<appId>/`; bodies up to 32 MiB; 32 connections; 60 s request timeout; events: last 1000
+per app, long poll up to 25 s, `lost` to list again. Any process of the same Android user can open the socket but
+needs the token, and `/proc/<pid>/environ` is readable by that user: malware on an unlocked phone stays out of scope
+(section 2). Next: 3b (procman gives apps the socket and a token; `HUB_DATA_DIR` goes away when the vault is on), 3c
+(the Notebook and the sample apps use the client).
+
 ### 8.2 The atomic write on encrypted files
 An encrypted file is never changed in place. A change:
 1. encrypts the new content into a new pack under a new random name, fsync;
