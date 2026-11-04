@@ -11,14 +11,15 @@ import { homedir } from 'node:os';
  * Run a command with an argument array (never a shell) and a hard timeout.
  * @param {string} cmd
  * @param {string[]} args
- * @param {{timeout?: number, input?: string}} [opts]
- * @returns {Promise<{ok: boolean, code: number|null, stdout: string, stderr: string, ms: number, error?: string}>}
+ * @param {{timeout?: number, input?: string|Buffer, encoding?: 'utf8'|'buffer'}} [opts]
+ *   encoding 'buffer': stdout and stderr come back as Buffers (for binary output)
+ * @returns {Promise<{ok: boolean, code: number|null, stdout: string|Buffer, stderr: string|Buffer, ms: number, error?: string}>}
  */
 export function run(cmd, args = [], opts = {}) {
   const timeout = opts.timeout ?? 10_000;
   const t0 = performance.now();
   return new Promise((resolve) => {
-    const child = execFile(cmd, args, { timeout, killSignal: 'SIGKILL', maxBuffer: 1 << 20 }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { timeout, killSignal: 'SIGKILL', maxBuffer: 1 << 20, encoding: opts.encoding ?? 'utf8' }, (err, stdout, stderr) => {
       const ms = performance.now() - t0;
       if (err) {
         const why = err.killed ? `timeout after ${timeout} ms` : (err.code ?? err.message);

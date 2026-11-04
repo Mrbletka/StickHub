@@ -1,5 +1,5 @@
 // Runs the phone probes, saves the result in probes/out/ (git-ignored) and copies it to the clipboard.
-// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
+// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8,9] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
 
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -14,6 +14,7 @@ import { run1 } from './p1-replug.mjs';
 import { run6 } from './p6-sync.mjs';
 import { run7 } from './p7-plug-open.mjs';
 import { run8 } from './p8-stick-mode.mjs';
+import { run9 } from './p9-keystore.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -45,7 +46,8 @@ async function main() {
   const r = new Report();
   r.add(`# StickHub probes ${new Date().toISOString()}`);
   const ctx = {};
-  await p0.run(r, opts, ctx); // always: it picks the test folders
+  // Probe 0 picks the test folders for probes 4 and 5 (and prints the stick's volume path): run it only when needed.
+  if (!opts.only || [0, 4, 5].some((n) => opts.only.has(n))) await p0.run(r, opts, ctx);
   try {
     await step(r, 5, opts, async () => {
       if (ctx.stickDir) { const d = join(ctx.stickDir, 'fs'); mkdirSync(d); await p5(r, d, 'stick'); }
@@ -68,6 +70,7 @@ async function main() {
   await step(r, 6, opts, () => run6(r));
   await step(r, 7, opts, () => run7(r));
   await step(r, 8, opts, () => run8(r));
+  await step(r, 9, opts, () => run9(r));
 
   const outDir = join(here, 'out');
   mkdirSync(outDir, { recursive: true });
