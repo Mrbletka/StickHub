@@ -1,0 +1,31 @@
+// Per-install settings that live outside the synced tree: ~/.stickhub/ (never on the stick, never in git).
+
+import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { randomBytes } from 'node:crypto';
+
+/** The private folder: $STICKHUB_HOME or ~/.stickhub */
+export function stickhubHome(env = process.env) {
+  return env.STICKHUB_HOME || join(homedir(), '.stickhub');
+}
+
+/**
+ * This device's random id (used in the stick lock). Created on first use.
+ * @param {string} home  private folder
+ * @returns {Promise<string>}
+ */
+export async function deviceId(home = stickhubHome()) {
+  const file = join(home, 'device.json');
+  try {
+    const { id } = JSON.parse(await readFile(file, 'utf8'));
+    if (typeof id === 'string' && /^dev-[0-9a-f]{12}$/.test(id)) return id;
+  } catch (e) {
+    if (e.code !== 'ENOENT' && !(e instanceof SyntaxError)) throw e;
+  }
+  const id = `dev-${randomBytes(6).toString('hex')}`;
+  await mkdir(home, { recursive: true, mode: 0o700 });
+  await writeFile(`${file}.tmp`, JSON.stringify({ id, created: new Date().toISOString() }), { mode: 0o600 });
+  await rename(`${file}.tmp`, file);
+  return id;
+}
