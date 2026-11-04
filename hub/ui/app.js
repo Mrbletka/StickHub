@@ -172,12 +172,24 @@ function onEvent(name, data) {
   } else if (name === 'status') {
     const prev = hubStatus?.stick?.state;
     hubStatus = data;
+    if (data.removed) showRemoved();
     if (prev && prev !== 'connected' && hubStatus.stick?.state === 'connected') flashChip();
     render();
     if (stickSheet.open) fillStickSheet($, hubStatus.stick);
   } else if (name === 'log') {
     if (logs.open && data.id === logsFor) addLogLine(data);
   }
+}
+
+// Stick mode: the stick was pulled out. The hub stops right after this, so this screen stays until a reload.
+function showRemoved() {
+  player.close();
+  for (const d of [menu, logs, stickSheet]) if (d.open) d.close();
+  events?.close();
+  events = null;
+  $('#removed').hidden = false;
+  chip.textContent = 'Stick removed';
+  chip.className = 'chip bad';
 }
 
 function showLocked(message) {

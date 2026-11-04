@@ -19,6 +19,7 @@ export function chipFor(st, running) {
   if (!st || st.state === 'none') return { text: `${pre}No stick`, cls: '' };
   if (st.state === 'blank') return { text: `${pre}Stick has no HUB`, cls: 'warn' };
   if (st.state === 'bad') return { text: `${pre}Stick problem`, cls: 'bad' };
+  if (st.portable) return { text: `${pre}Running from the stick`, cls: 'ok' };
   if (st.sync?.running) return { text: `${pre}Syncing ${st.sync.done || 0}/${st.sync.total || '…'}`, cls: 'ok' };
   if (st.last && st.last.result !== 'ok') return { text: `${pre}Sync not finished`, cls: 'warn' };
   if (st.conflicts?.length) return { text: `${pre}${st.conflicts.length} conflict${st.conflicts.length > 1 ? 's' : ''}`, cls: 'warn' };
