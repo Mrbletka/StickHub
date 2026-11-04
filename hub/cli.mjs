@@ -9,6 +9,7 @@
 //   node hub/cli.mjs hub stop            stop the hub and its apps
 //   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
+//   node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]   a new app from a starter
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +24,9 @@ import { readToken } from './auth.mjs';
 import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs';
 import { openUrl } from './platform/termux.mjs';
 import { watchCommand, widgetInstall } from './cli-watch.mjs';
+import { createApp } from './scaffold.mjs';
+import { loadApp } from './apps.mjs';
+import { loadEngines } from './engines.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
@@ -35,7 +39,8 @@ const USAGE = `Usage:
   node hub/cli.mjs open
   node hub/cli.mjs hub stop
   node hub/cli.mjs watch start|stop|status
-  node hub/cli.mjs widget install`;
+  node hub/cli.mjs widget install
+  node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`;
 
 /** Split argv into words and --flags. */
 function parse(argv) {
@@ -44,7 +49,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
-    else if (a === '--name' || a === '--mount') {
+    else if (a === '--name' || a === '--mount' || a === '--engine') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
     } else if (a.startsWith('--')) throw new UsageError(`Unknown option ${a}`);
@@ -184,6 +189,20 @@ async function open() {
   return login({ open: true });
 }
 
+/** A new app from a starter, checked like the hub checks it; the running hub shows it at once. */
+async function newApp(id, flags) {
+  if (!id) throw new UsageError('new: give the app id, e.g. node hub/cli.mjs new deep-dig --engine node-server');
+  if (!flags.engine) throw new UsageError('new: say --engine node-server (has a server, can save) or --engine static (files only)');
+  const { dir, files } = await createApp(join(ROOT, 'apps'), { id, engine: flags.engine, name: flags.name });
+  console.log(`Created apps/${id}/: ${files.join(', ')}`);
+  const { engines } = await loadEngines();
+  const app = await loadApp(dir, id, engines);
+  if (app.errors.length) { console.log(`Problems: ${app.errors.join('; ')}`); return 1; }
+  const r = await callHub('/api/apps/reload', { method: 'POST', token: await readToken(stickhubHome()) });
+  console.log(r?.status === 200 ? 'The hub shows it now.' : 'Start the hub to see it: node hub/cli.mjs open');
+  return 0;
+}
+
 async function main(argv) {
   const { words, flags } = parse(argv);
   const [a, b, c] = words;
@@ -192,6 +211,7 @@ async function main(argv) {
   if (a === 'sync' && (b === 'plan' || b === 'run')) return sync(b, c || 'all', flags);
   if (a === 'code' && b === 'pull-from-stick') return pull(flags);
   if (a === 'login') return login(flags);
+  if (a === 'new') return newApp(b, flags);
   if (a === 'watch') return watchCommand(b, ROOT, stickhubHome());
   if (a === 'widget' && b === 'install') return widgetInstall(ROOT);
   if (a === 'open') return open();
