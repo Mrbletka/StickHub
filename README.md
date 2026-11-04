@@ -52,7 +52,13 @@ node hub/cli.mjs watch start|stop|status           # the watcher
 - On a PC (or for tests) `STICKHUB_MOUNTS=/path/one:/path/two` makes folders act as sticks.
 
 ## Add an app
-Make `apps/<id>/app.json` (id: a-z, 0-9, "-"; must match the folder name):
+```sh
+node hub/cli.mjs new deep-dig --engine node-server --name "Deep Dig"   # or --engine static
+```
+This makes `apps/deep-dig/` with app.json, a starter (the node-server one saves through `/api/save` into
+`HUB_DATA_DIR`), a placeholder icon and a README with the rules. The running hub shows the new tile at once.
+
+By hand: make `apps/<id>/app.json` (id: a-z, 0-9, "-"; must match the folder name):
 ```json
 { "id": "deep-dig", "name": "Deep Dig", "icon": "icon.svg", "engine": "node-server",
   "entry": "server.mjs", "port": "auto", "args": [], "env": {}, "version": "0.1.0" }

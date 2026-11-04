@@ -82,6 +82,18 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
 - The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
 - Saves: an app saves to HUB_DATA_DIR through its own server. Browser storage (IndexedDB, localStorage) is NOT synced.
 
+## Making apps
+- Start every app with `node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`. It makes apps/<id>/ with
+  app.json, a starter, a placeholder icon.svg and a README.md with the rules. It never overwrites an existing folder.
+- node-server apps: listen on process.env.PORT at 127.0.0.1, keep saves in process.env.HUB_DATA_DIR through the app's own
+  server (the starter has GET/PUT /api/save with atomic writes), stop cleanly on SIGTERM, Node built-ins only,
+  run alone with `PORT=4100 node server.mjs`.
+- static apps: files only, no saves.
+- Browser storage (localStorage, IndexedDB) is not synced, so no saves there.
+- Apps open full screen in the hub player (iframe, own port). Phone first: about 423x930 CSS px, touch, no hover.
+  Weak GPU, two fast cores: 2D canvas or light WebGL, aim for 60 fps.
+- Use relative URLs inside an app (`fetch('api/save')`, not `/api/save` with a host), so it also works when run alone.
+
 ## Engines (hub/engines/<id>.mjs)
 Contract: `export default { id, validate(manifest) -> string[] errors, async start(ctx) -> { port, url, stop(), exit?, pid? } }`.
 v1: `node-server` (spawn process.execPath with entry, wait until the port accepts TCP, health check) and `static` (built-in static server: correct MIME, Range requests, no path traversal, optional SPA fallback).
@@ -152,7 +164,9 @@ A finished phase is recorded here with its commit hash (no git tags).
    **Done: b306b14** (tested on the phone and the real stick 2026-11-04, unplug mid-sync included; docs/PROBES.md run 3).
 3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
    **Done: f8da240** (tested on the phone 2026-11-04: plug in -> open and logged in 6.6 s, as the installed app; docs/PROBES.md run 4).
-4. Windows launcher + portable Node (design only until I ask).
+4. Windows launcher + portable Node: **design only, later**. Not now.
+
+Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` (see "Making apps").
 
 ## Delivery
 - Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
