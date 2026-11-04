@@ -674,7 +674,9 @@ Deviations and choices, with the reason:
 Done in job 2, parts B1-B5 (`vault export` / `vault verify`, compaction and the store probe come next).
 `hub/vault/`: `vfs.mjs` (guarded file I/O), `replica.mjs` (header copies, index scan, index commit, new replica),
 `indexfile.mjs` (index and pack contents, checked field by field), `vxread.mjs` (range reads), `store-ops.mjs`
-(file operations on a draft), `packs.mjs`, `cleanup.mjs`, `store.mjs` (the API). 28 new tests: store, limits,
+(file operations on a draft), `packs.mjs`, `cleanup.mjs`, `store.mjs` (the API). Later in job 2: `store-read.mjs`
+(reads), `queue.mjs` (the write queue: one thing at a time, changes of the same tick as one commit), `compact.mjs`
+(compaction and maintain), `verify.mjs`, `export.mjs`. 28 new tests: store, limits,
 cleanup, unplug at every step of a save, a group commit, a cleanup and a header write, and the store in the
 no-secrets test.
 

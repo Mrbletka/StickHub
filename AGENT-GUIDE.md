@@ -214,7 +214,12 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   not wired into the hub; all 190 tests pass on the phone 2026-11-04).
 - v1 step 2, part 2: fixes C1-C4 (f219982), `vault verify` / `vault export` (1dd1b93), trash and compaction with
   maintain() (abf92c4), probe 10 store part (27fb91c; run on the phone 2026-11-04: all tests pass, one stick save 236 ms, pull test
-  old state with no problems; docs/PROBES.md run 9). Next: v1 step 3 (data API).
+  old state with no problems; docs/PROBES.md run 9); close-out: write queue in queue.mjs, reopen() after a failed
+  save, one cleanup before NEEDS_REPAIR, #dirty kept until a full cleanup, probe 10 maintenance step.
+  **Job 2 (v1 step 2) done.** Next: v1 step 3 (data API).
+- hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
+  indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup, compact (compaction
+  and maintain), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
 - Store rules: a .vx file is never changed in place; index files are committed by rename; the newest index that
   decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
   queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files

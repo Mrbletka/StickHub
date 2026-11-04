@@ -103,7 +103,7 @@ hub/sync/             scan, plan, run (journal, resume, cancel), hub service, sa
 hub/platform/         adapters: volumes (mountinfo), Termux actions, git
 hub/watcher.mjs       opens the hub when the stick is plugged in
 hub/auth.mjs          token and one-time login codes
-hub/vault/            encrypted vault crypto (v1 step 1, not wired in yet; see docs/VAULT-DESIGN.md)
+hub/vault/            encrypted vault: crypto and the store (not wired into the hub yet; see docs/VAULT-DESIGN.md)
 hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
 hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
 hub/ui/               the web UI (vanilla)
