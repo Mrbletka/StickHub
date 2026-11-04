@@ -74,6 +74,25 @@ function backupState(main, backup, header, dk) {
   }
 }
 
+/**
+ * Check both header copies now, with the data key (for cleanup: it must not run on a header that fails).
+ * @returns {Promise<{problem: string|null, backupBehind: boolean, text: string|null}>} text: the checked main copy
+ */
+export async function checkHeaderCopies(dir, dk, vaultId, vfs) {
+  const read = async (name) => (await vfs.readLimited(join(dir, name), HEADER_MAX_BYTES))?.toString('utf8') ?? null;
+  const main = await read(HEADER_MAIN);
+  if (main === null) return { problem: 'main header missing', backupBehind: false, text: null };
+  try {
+    const h = parseHeader(main);
+    verifyHeaderMac(h, dk);
+    if (!h.vaultId.equals(vaultId)) return { problem: 'main header of another vault', backupBehind: false, text: null };
+    return { ...backupState(main, await read(HEADER_BACKUP), h, dk), text: main };
+  } catch (e) {
+    if (!(e instanceof VaultError)) throw e;
+    return { problem: `main header ${e.code}`, backupBehind: false, text: null };
+  }
+}
+
 /** Write both header copies: main first, then the backup (each .part, fsync, rename). */
 export async function writeHeaderFiles(dir, text, vfs) {
   await vfs.writeAtomic(join(dir, HEADER_MAIN), text);

@@ -373,10 +373,7 @@ export class Store {
 
   async #cleanup() {
     if (this.#reads) return { done: false, reasons: ['reads in progress'] };
-    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, current: this.#current.name,
-      problems: this.#problems, headerInfo: this.#headerInfo, headerText: this.#headerText });
-    if (r.removed?.headerBackup) this.#headerInfo.backupBehind = false;
-    return r;
+    return runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
   }
 }
 

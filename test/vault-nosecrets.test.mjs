@@ -103,3 +103,50 @@ test('no secret shows up in any output, error or header', async () => {
     for (const n of needles) assert.ok(!hay.includes(n), `a piece of a secret appears in ${where}`);
   }
 });
+
+test('the store: no secret, note name or note text shows up in any output or error', async () => {
+  const { makeTestStore } = await import('./vault-helpers.mjs');
+  const { openVaultFolder } = await import('../hub/vault/store.mjs');
+  const { rmSync, writeFileSync, readdirSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const name = 'Private-Qz8Kw/Letter-to-Mw4Rt.md';
+  const text = 'TEST-ONLY note body Hv5Lp9Xc';
+  const rec = record();
+  const errors = [];
+  const fails = async (fn) => {
+    try { await fn(); } catch (e) { errors.push(e); return; }
+    throw new Error('expected a failure');
+  };
+  let t;
+  try {
+    t = await makeTestStore();
+    const s = t.store;
+    await s.write(name, text);
+    await s.read(name);
+    await s.read(name, { start: 2, end: 9 });
+    await fails(() => s.write(`${name}/under`, text));
+    await fails(() => s.write(name, text, { ifMatch: null }));
+    await fails(() => s.mkdir(name));
+    await fails(() => s.move(name, 'Private-Qz8Kw'));
+    await fails(() => s.write('private-qz8kw/Other-Mw4Rt.md', text));
+    await fails(() => s.read(`${name}.missing`));
+    await fails(() => s.stat('Private-Qz8Kw/../Letter-to-Mw4Rt.md'));
+    await fails(() => s.restore(['0123456789abcdef']));
+    await s.remove([name]);
+    await s.cleanup();
+    for (const n of readdirSync(join(t.dir, '_index'))) writeFileSync(join(t.dir, '_index', n), 'damaged');
+    await fails(() => openVaultFolder(t.dir, (h) => unlockWithPassphrase(h, t.v.passphrase)));
+    await fails(() => openVaultFolder(t.dir, (h) => unlockWithPassphrase(h, `${t.v.passphrase}x`)));
+    await s.close();
+    await fails(() => s.read(name));
+  } finally {
+    rec.stop();
+    if (t) rmSync(t.root, { recursive: true, force: true });
+  }
+  assert.ok(errors.length >= 11, `${errors.length} failures recorded`);
+  for (const e of errors) assert.ok(e instanceof VaultError, `${e.name}: a VaultError`);
+  const needles = [...['Private-Qz8Kw', 'Letter-to-Mw4Rt', 'Qz8Kw', 'Mw4Rt', 'Hv5Lp9Xc', t.v.passphrase].flatMap((x) => [x, x.toLowerCase()]),
+    ...encodings(t.v.dk).flatMap(pieces)];
+  const hay = `${rec.text()}\n${errors.map((e) => `${e.code} ${e.message}\n${e.stack}\n${JSON.stringify(e)}`).join('\n')}`;
+  for (const n of needles) assert.ok(!hay.includes(n), 'a note name, note text or key appears in the output or an error');
+});
