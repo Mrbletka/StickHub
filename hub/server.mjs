@@ -47,6 +47,9 @@ export async function createHub(opts = {}) {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         const origin = req.headers.origin;
         if (origin && !allowed.some((h) => origin === `http://${h}`)) return json(res, 403, { error: 'Wrong origin' });
+        // Browsers also say where a request comes from; "none" = typed by the user, same-origin = our own UI.
+        const site = req.headers['sec-fetch-site'];
+        if (site && site !== 'same-origin' && site !== 'none') return json(res, 403, { error: 'Cross-site request refused' });
       }
       const path = new URL(req.url || '/', 'http://x').pathname;
       if (path.startsWith('/api/')) return await api.handle(req, res, path);

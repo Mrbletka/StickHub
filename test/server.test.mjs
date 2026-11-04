@@ -31,6 +31,12 @@ test('host and origin checks', async () => {
   assert.equal((await http(port, '/api/apps', { headers: { host: `localhost:${port}` } })).status, 200);
   const r = await http(port, '/api/apps/good/start', { method: 'POST', headers: { origin: 'http://evil.example' } });
   assert.equal(r.status, 403);
+  for (const site of ['cross-site', 'same-site']) {
+    const s = await http(port, '/api/apps/good/start', { method: 'POST', headers: { 'sec-fetch-site': site } });
+    assert.equal(s.status, 403, site);
+  }
+  const nullOrigin = await http(port, '/api/apps/good/start', { method: 'POST', headers: { origin: 'null' } });
+  assert.equal(nullOrigin.status, 403);
   assert.equal(hub.procman.view('good').status, 'stopped');
 });
 
