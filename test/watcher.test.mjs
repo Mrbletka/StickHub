@@ -13,13 +13,14 @@ async function fakes({ openOk = true } = {}) {
   await mkdir(stick);
   await mkdir(blank);
   await initStick(stick, { name: 'Test' });
-  const calls = { ensure: 0, open: [], notify: [], pull: 0 };
+  const calls = { ensure: 0, stickHub: 0, open: [], notify: [], pull: 0 };
   const logs = [];
   let volumes = [];
   let settings = { autoPull: false, requireStick: false };
   const w = new Watcher({
     listVolumes: async () => ({ volumes: volumes.map((m) => ({ mountPoint: m })), error: null }),
     ensureHub: async () => { calls.ensure++; return { started: calls.ensure === 1 }; },
+    ensureStickHub: async (s) => { calls.stickHub++; calls.stickMount = s.mount; return { already: false }; },
     loginUrl: async () => `http://127.0.0.1:8787/?code=c${calls.open.length}`,
     openUrl: async (url) => { calls.open.push(url); return openOk ? { ok: true } : { ok: false, error: 'blocked' }; },
     notify: async (n) => { calls.notify.push(n); return { ok: true }; },
@@ -69,4 +70,16 @@ test('a stick without HUB is reported once and never opens the hub; autoPull run
   f.plug(f.stick);
   await f.w.check();
   assert.equal(f.calls.pull, 1);
+});
+
+test('with runFromStick the watcher starts the hub from the stick, not the phone copy', async () => {
+  const f = await fakes();
+  f.setSettings({ autoPull: false, requireStick: false, runFromStick: true });
+  f.plug(f.stick);
+  await f.w.check();
+  assert.equal(f.calls.stickHub, 1);
+  assert.equal(f.calls.stickMount, f.stick);
+  assert.equal(f.calls.ensure, 0);
+  assert.equal(f.calls.open.length, 1);
+  assert.match(f.logs.join('\n'), /hub started from the stick/);
 });
