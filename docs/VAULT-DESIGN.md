@@ -2,9 +2,8 @@
 
 Status: **design only, nothing is built.** Reviewed by Claude and Fabian on 2026-11-04; the decisions are in
 section 0 and are folded into the sections below.
-Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, run 7) and are marked **(p9)**.
-Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not known: what is in front after
-the touch in the fingerprint box (Fabian could not tell); the hub brings its page back either way (section 5).
+Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, runs 7 and 8) and are marked
+**(p9)**. Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet.
 
 ## 0. Decisions after review
 | # | Decision |
@@ -14,7 +13,7 @@ the touch in the fingerprint box (Fabian could not tell); the hub brings its pag
 | 3 | Apps use the data API. The client looks like normal file functions (`readFile`, `writeFile`, `readdir`, `rename`, `mkdir`, `rm`, `stat`), so a port is one small change. `hub new` gives new apps the client by default. Plain files when an app runs alone |
 | 4 | Auto-lock after 5 min with no visible hub page; also lock when the stick is pulled in data-on-stick mode |
 | 5 | The hub generates a passphrase of 5 random words by default (EFF large word list, 7776 words, CC BY 3.0 US, with attribution). An own passphrase only with 20+ characters |
-| 6 | Argon2id m = 256 MiB, t = 3, p = 4 (0.9 s on the phone). The limits in 4.2 stay |
+| 6 | Argon2id m = 256 MiB, t = 3, p = 4 (0.9-1.2 s on the phone). The limits in 4.2 stay |
 | 7 | A vaulted stick gets a new marker (format 2), so an old hub ignores it |
 | 8 | Plain data left on the flash chips from before the vault stays a known limit. Fabian decides about a fresh stick |
 | 9 | Paper code: 28 characters. Using it always shows a NEW paper code. Rekey only on request |
@@ -27,7 +26,7 @@ the touch in the fingerprint box (Fabian could not tell); the hub brings its pag
 | D | Passphrase and paper-code fields: Chrome must not offer to save them, Gboard must not learn them (section 7.9). Checked by hand in probe 10 |
 | E | A Keystore signature counts only if it is exactly 256 bytes, never by exit code |
 | F | Unlock attempts on the hub API are rate-limited (section 7.9) |
-| G | Fabian after p9: the fingerprint box has no pattern button; what is in front after the touch is not known. So the unlock flow always brings the hub page back after the box, and the pattern fallback is the lock screen (section 5) |
+| G | p9: the fingerprint box has no pattern button, so the pattern fallback is the lock screen. Run 8 (clear questions): the box shows on top of StickHub and StickHub is in front after the touch, so the page is brought back only if it does not report itself visible (section 5) |
 
 ## 1. Summary
 - Today the app data on the stick (`HUB/data/`) is plain files. Whoever finds the stick reads everything.
@@ -93,7 +92,7 @@ Not visible: file names, folders, how many files each app has, single file sizes
 ## 3. Building blocks (node:crypto, zero dependencies)
 | Job | Primitive (standard) | Node | Settings |
 |---|---|---|---|
-| Passphrase -> key | Argon2id (RFC 9106) | `crypto.argon2('argon2id', ...)`, Node 24 | m = 256 MiB, t = 3, p = 4: 0.9 s and 310 MB peak on the phone **(p9)**. RFC 9106's second option (64 MiB) takes only 0.2 s there, so we afford 4x the memory. Stored per slot |
+| Passphrase -> key | Argon2id (RFC 9106) | `crypto.argon2('argon2id', ...)`, Node 24 | m = 256 MiB, t = 3, p = 4: 0.9-1.2 s and 310 MB peak on the phone **(p9)**. RFC 9106's second option (64 MiB) takes only 0.2 s there, so we afford 4x the memory. Stored per slot |
 | Passphrase -> key if Argon2id is missing | scrypt (RFC 7914) | `crypto.scrypt` | N = 2^17, r = 8, p = 1 (128 MiB): 0.54 s on the phone **(p9)**. Only for a device without Argon2id |
 | High-entropy secret -> key, subkeys | HKDF-SHA256 (RFC 5869) | `crypto.hkdf` | 32-byte output, labels below |
 | Encrypt and authenticate | AES-256-GCM, 96-bit nonce, 128-bit tag | `createCipheriv('aes-256-gcm')` | 206 MB/s on the phone **(p9)**, 10x the stick. ChaCha20-Poly1305 is a bit faster there (271 MB/s), but AES-GCM is also in WebCrypto and crypto is not the bottleneck |
@@ -198,16 +197,16 @@ Measured **(p9, termux-api 0.60.0)**:
 - A successful `termux-fingerprint` (the "fingerprint box") also opens the window. It takes a title (`-t`), so it
   can say "Unlock StickHub". The box has **no pattern button**: fingerprint only (Fabian checked with
   `termux-fingerprint -t "Test"`).
-- Started from the background while StickHub is in front, the box works (fingerprint accepted, sign ok, 4.3 s), but
-  Android **switches to the Termux:API app** to show it (Fabian, after the run). Not known yet: what is in front
-  after the touch, so the hub always brings its page back.
+- Started from the background while StickHub is in front, the box works (fingerprint accepted, sign ok, 3.3-4.3 s).
+  Run 8, with clear questions: the box shows **on top of StickHub**, and **StickHub is in front after the touch**.
+  (Run 7 had reported a switch to the Termux:API app; its question was unclear. Run 8 is taken as the answer.)
 
 The build:
 - Key: RSA-2048, `generate -u 30` (decision 1).
 - Unlock: first try `sign` (1.2 s). If the phone was unlocked in the last 30 s (you usually unlock it, then plug in
   the stick or tap the widget), that is all: no extra touch. If `sign` gives nothing:
-  `termux-fingerprint -t "Unlock StickHub"`, then `sign` again, then `termux-open-url` to bring StickHub back to the
-  front (the box switched to the Termux:API app).
+  `termux-fingerprint -t "Unlock StickHub"`, then `sign` again. Safety net for run 7's report: if the hub page does
+  not report itself visible (7.3 heartbeat) within 2 s after the touch, the hub calls `termux-open-url` once.
 - Pattern instead of the finger (the box has none): lock the phone and unlock it with the pattern (p9: this opens
   the window), then tap **Unlock** in the hub within 30 s; its first `sign` then works. The lock screen says so:
   "Finger not working? Lock the phone, unlock it with your pattern, then tap Unlock."
@@ -225,9 +224,8 @@ the device slot fails, the passphrase opens the vault, and the phone enrolls aga
 fallback, if the Keystore could not be trusted at all, stays: passphrase at every hub start, no device slot. There is
 no "soft" slot (decision 1).
 - A signature counts only if `sign` gave exactly 256 bytes; the exit code is ignored (decision E).
-- Still to measure in probe 10 (v2): what is in front after the touch, and whether to try the sign before opening the
-  page (about 1 s slower on the fast path, but on the box path the screen jumps only once). Until then: try the sign
-  and open the page at the same time, and always bring the page back after the box.
+- Still to measure in probe 10 (v2): plug-in to open on both paths, and how often the safety net is needed. Until
+  then: try the sign and open the page at the same time.
 
 ## 6. File format
 
@@ -357,7 +355,7 @@ Writes: header (2 copies) on both sides, packs and index on both sides, the back
 1. The hub starts locked (widget, or the watcher at plug-in). The page shows the lock screen; no app can start.
 2. If this phone has a device slot, the hub starts the unlock at once, in parallel with opening the page:
    `termux-keystore sign` (no touch if the phone was unlocked in the last 30 s; else the fingerprint box, which
-   switches to the Termux:API app, then sign again and bring the page back) -> HKDF -> unwrap DK -> check the header MAC ->
+   shows on top of StickHub, then sign again; the page is brought back only if it is not visible) -> HKDF -> unwrap DK -> check the header MAC ->
    read the newest index (phone replica; in data-on-stick mode the stick's) -> tiles.
 3. Cancelled or failed: buttons **Fingerprint**, **Passphrase**, **Paper code**. In v1, and after a hard lock, only
    **Passphrase** and **Paper code**.
@@ -534,7 +532,7 @@ the stick is plugged in.
 | Stick found -> hub started (cold) | 1.0-1.1 s (runs 4, 6) | same |
 | Stick found -> page open, logged in | about 2-3 s (runs 4, 6) | same, in parallel with the unlock |
 | Keystore sign (phone unlocked in the last 30 s) | - | 1.1-1.3 s **(p9)** |
-| Otherwise: failed sign, fingerprint box and touch, sign again, bring the page back | - | 1.2 + about 3 + 1.2 + 1.5-2 s (`termux-fingerprint` 3.2 s with the touch, **p9**; `termux-open-url` 1.5-2 s, run 1) |
+| Otherwise: failed sign, fingerprint box and touch, sign again | - | 1.2 + about 3.5 + 1.2 s (`termux-fingerprint` 3.3-3.5 s with the touch, **p9**); + 1.5-2 s only if the safety net reopens the page |
 | Unwrap DK, check header | - | under 10 ms (HKDF 32 us on the phone, **p9**) |
 | Read + decrypt the index | - | about 0.1-0.2 s on the stick (estimate) |
 | **Plug-in -> open** | **6.6 s** (phone copy), **9.1 s** (data on the stick, cold hub) | see the two cases below |
@@ -543,16 +541,13 @@ The unlock starts as soon as the hub runs, in parallel with the page opening (2-
 from the header copy on the phone, so it does not wait for the stick.
 - **Fast path** (the phone was unlocked in the last 30 s, the usual case when you pick it up and plug in the stick):
   one sign, 1.2 s, hidden behind the page load. Plug-in -> open stays close to today: about 6.6-9.5 s (estimate).
-- **Fingerprint-box path** (unlocked longer ago): about 7-7.5 s after the hub starts, because the box switches to
-  the Termux:API app and the page must be brought back. Plug-in -> open about 12-15 s (estimate): **over the goal**,
-  and the screen jumps StickHub -> Termux:API -> StickHub.
+- **Fingerprint-box path** (unlocked longer ago): about 6 s after the hub starts; the box shows on top of StickHub.
+  Plug-in -> open about 10-13 s (estimate): **at or over the goal**.
 To avoid or shorten the fingerprint-box path:
 1. Keep the hub running and unlocked: the widget tap starts it and unlocks it on the fast path (you just unlocked the
    phone to tap). Plug-in then needs no unlock at all, unless the hub auto-locked.
 2. Poll mountinfo every 1 s instead of 2 s (0.7 ms per read): 0.5 s less on average.
-3. Option: try the sign before opening the page. That costs about 1 s on the fast path, but on the box path the
-   screen goes Termux:API -> StickHub only once (measured in probe 10, v2).
-4. Probe 10 (after the build) measures both paths and what is in front after the touch.
+3. Probe 10 (after the build) measures both paths.
 The passphrase path is slower (typing + 0.9 s Argon2id). In **v1** that is the only path, so v1 does not meet the
 10 s goal on a cold start; it does when the hub is already unlocked (plug-in then adds no unlock). The goal is for v2.
 
@@ -595,8 +590,8 @@ the refusal), and one that prints nothing and exits 0 (what `termux-keystore sig
 - **Hard lock**: the device secret and Keystore key are gone; the device slot fails; the passphrase still opens.
 - **Keystore adapter**: 0, 255 and 257 bytes = not unlocked, whatever the exit code.
 - **Phone**: probe 10 after the build (v1 part first): one save on the stick, sync of 120 changed notes, compaction,
-  pull mid-save, the field checks of 7.9, `Clear-Site-Data`; v2 part: plug-in to open with the fingerprint, what is in
-  front after the touch.
+  pull mid-save, the field checks of 7.9, `Clear-Site-Data`; v2 part: plug-in to open with the fingerprint, and whether the
+  safety net (page reopened after the box) is ever needed.
 
 ## 11. Build order
 **v1: passphrase + paper code, end to end.** No device slot; nothing in v1 waits for v2.
@@ -653,15 +648,15 @@ Deviations and choices, with the reason:
    copy), the rate limit, everything about the device slot.
 
 **v2: device slot.**
-7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then bring the page back),
+7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),
    pattern hint on the lock screen, devices page, remove a device (rekey), `vault lock --hard` and the **StickHub
-   lock** widget. Probe 10, v2 part: plug-in to open, what is in front after the touch, the order at plug-in.
+   lock** widget. Probe 10, v2 part: plug-in to open on both paths.
 
 ## 12. Still open
 All twelve review questions are decided (section 0). Left for later measurement, not for design:
 1. Probe 10 (v1): `Clear-Site-Data` on `http://127.0.0.1:<port>` in Chrome; the field checks of 7.9; vault costs on
    the stick.
-2. Probe 10 (v2): what is in front after the fingerprint box; try the sign before or together with opening the page.
+2. Probe 10 (v2): plug-in to open on both paths; whether the page ever needs reopening after the fingerprint box.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
 4. Found in step 1: NFKC does not trim. A keyboard that adds a trailing space (or a double space between words) makes
    the passphrase wrong. Trim and collapse spaces before the KDF? Must be decided before the first real vault, since

@@ -172,3 +172,21 @@ first, show the fingerprint box only when it gives nothing, then bring the hub p
 away from StickHub); the adapter accepts exactly 256 bytes. Pattern fallback: unlock the phone with the pattern on the
 lock screen, then tap Unlock in the hub within 30 s. Passphrase slot: Argon2id
 256 MiB, t=3, p=4 (0.9 s). AES-256-GCM stays (10x the stick's speed).
+
+## Run 8 - 2026-11-04: probe 9 again, clear questions (code 146cb6d)
+Same phone and versions as run 7. Every result of run 7 repeated; what is new or different:
+| Check | Result |
+|---|---|
+| Argon2id m=256 MiB t=3 p=4 | 1154 ms (run 7: 910 ms), peak memory 308 MB |
+| AES-256-GCM / ChaCha20-Poly1305, 64 KiB segments | 256 / 238 MB/s (run 7: 206 / 271) |
+| right after a fingerprint unlock | signs (2.6 s for that call); no fingerprint box while signing |
+| `termux-fingerprint` (in front) | success, 3.5 s with the touch; **no pattern button** (confirms Fabian's check) |
+| `termux-fingerprint` started while StickHub was in front | success after 3.3 s; the box showed **on top of StickHub**; **StickHub in front after the touch** |
+| same signature every time | yes (5 signatures, auth key) |
+| test keys | deleted (3 left by an earlier interrupted run deleted first) |
+
+Run 7's "switched to the Termux:API app" came from an unclear question; run 8 is taken as the answer. The vault design
+keeps one safety net: if the hub page does not report itself visible within 2 s after the box, the hub reopens it.
+
+## Vault v1 step 1 on the phone - 2026-11-04 (code 43f913a)
+`node --test`: 160 tests, 159 pass, 0 fail, 1 skipped (the fixture writer, by design), 23 s.
