@@ -128,3 +128,45 @@ slower under load: "nothing answered on port 47101 in time").
 
 Run 5's 17.6 s was the stick showing up late, not the hub. Data-on-stick mode is ready; it stays off until the owner
 switches it on (dataOnStick in ~/.stickhub/settings.json).
+
+## Run 7 - 2026-11-04: probe 9, Keystore and crypto for the vault (code 6aaf9fb)
+Node 24.22.1 with OpenSSL 3.6.5, termux-api 0.60.0. Only sha256 prefixes of signatures were printed.
+
+### Node crypto
+| Check | Result |
+|---|---|
+| Argon2id, scrypt, HKDF-SHA256, AES-256-GCM, ChaCha20-Poly1305 against the RFC test vectors | all ok |
+| AES-256-GCM-SIV round trip, tampering detected | ok |
+| Argon2id m=19 MiB t=2 p=1 | 68 ms |
+| Argon2id m=64 MiB t=3, p = 1 / 2 / 4 | 347 / 271 / 212 ms |
+| Argon2id m=128 MiB t=3 p=4 | 362 ms |
+| Argon2id m=256 MiB t=3 p=4 | 910 ms, peak memory 310 MB |
+| scrypt r=8 p=1, N = 2^15 / 2^16 / 2^17 | 142 / 265 / 539 ms |
+| AES-256-GCM, 64 KiB segments | 206 MB/s |
+| ChaCha20-Poly1305, 64 KiB segments | 271 MB/s |
+| SHA-256 | 1118 MB/s |
+| HKDF-SHA256 | 32 us |
+
+### termux-keystore and termux-fingerprint
+| Check | Result |
+|---|---|
+| installed, Termux:API answers | yes; one call (list, sign) 1.1-1.3 s, generate 1.3-1.7 s |
+| RSA-2048 key | inside secure hardware |
+| sign output | 256 raw bytes on stdout; `verify` accepts that file |
+| same challenge -> same signature (SHA256withRSA) | yes: 2 signatures (no-auth key) and 5 (auth key, across locks and unlocks) |
+| EC-256 (SHA256withECDSA) | different each time (random, as expected) |
+| key with `-u 15` | auth required, enforced by secure hardware |
+| 19 s after the last unlock | refused: **no output, exit 0** |
+| right after a fingerprint unlock, and again at once | signs; no prompt |
+| 19 s later | refused |
+| `termux-fingerprint` success (3.2 s with the touch), then sign | signs: the prompt opens the window |
+| that prompt | offers the pattern too; options `-t -d -s -c` |
+| right after a pattern unlock (lock screen) | signs |
+| `termux-fingerprint` started while StickHub was in front | success after 4.3 s, sign ok; the prompt was not seen over StickHub (to clarify) |
+| test keys | deleted (3 left by an interrupted earlier run were deleted first) |
+
+### Decision
+The Keystore gate is a time window only: a key signs for N seconds after a fingerprint or pattern unlock, or after a
+successful `termux-fingerprint`. Device slot in docs/VAULT-DESIGN.md section 5: RSA-2048 with `-u 30`; try `sign`
+first, show the prompt only when it gives nothing; the adapter accepts exactly 256 bytes. Passphrase slot: Argon2id
+256 MiB, t=3, p=4 (0.9 s). AES-256-GCM stays (10x the stick's speed).

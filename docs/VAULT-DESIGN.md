@@ -1,9 +1,9 @@
 # Encrypted vault: design (draft for review)
 
 Status: **design only, nothing is built.** Claude and Fabian review this first.
-Every claim about the Android Keystore (`termux-keystore`, `termux-fingerprint`) is marked **(pending p9)** until the
-result of probe 9 (`sh probes/run-all.sh --only 9`) is pasted. The same goes for "Node on the phone has Argon2id".
-Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet.
+Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, run 7) and are marked **(p9)**.
+Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. One p9 point is still unclear:
+where the fingerprint prompt shows when it is started from the background (section 5, open question 1).
 
 ## 1. Summary
 - Today the app data on the stick (`HUB/data/`) is plain files. Whoever finds the stick reads everything.
@@ -35,8 +35,8 @@ App data (notes, saves) and its metadata (file names, folders, sizes, how many f
 | Stick lost or stolen; the finder copies it and has unlimited time and computers | Everything in `HUB/data/` is AES-256-GCM. The data key is wrapped three ways: passphrase (Argon2id, slow and memory-heavy per guess), device key (lives in the phone's secure hardware, never on the stick), recovery code (130 random bits) | Unreadable. The weakest point is the passphrase: a short or common one can be guessed offline. See section 4.2 |
 | Stick tampered while away (files changed, swapped, cut short, deleted) | Every encrypted file is authenticated; keys and nonces are bound to the file's id; the header has a MAC | Detected, never silently accepted. Deleting files is a denial of service; the phone copy is the backup |
 | Stick rolled back to an older copy of itself | Each phone remembers the newest index number it saw on the stick | Detected by any phone that synced before. A brand-new device cannot tell |
-| Phone lost or stolen, screen locked | Phone copy encrypted; nothing runs in Termux without unlocking the screen; the device key needs a recent fingerprint or pattern **(pending p9)**; Android limits wrong pattern tries (growing waits) | Unreadable without unlocking the phone, the passphrase or the paper code. If the hub was unlocked when the phone was taken, the data key is in memory until auto-lock (section 7.3) |
-| A copy of the phone's Termux folder (a backup, a tar on the stick or in a cloud) | The device key stays in the phone's secure hardware; the copy holds only a helper secret | Useless without that phone **(pending p9; not true for result D, section 5)** |
+| Phone lost or stolen, screen locked | Phone copy encrypted; nothing runs in Termux without unlocking the screen; the device key refuses unless the phone was unlocked (fingerprint or pattern) in the last 30 s **(p9)**; Android limits wrong pattern tries (growing waits) | Unreadable without unlocking the phone, the passphrase or the paper code. If the hub was unlocked when the phone was taken, the data key is in memory until auto-lock (section 7.3) |
+| A copy of the phone's Termux folder (a backup, a tar on the stick or in a cloud) | The device key stays in the phone's secure hardware; the copy holds only a helper secret | Useless without that phone: the key is inside secure hardware **(p9)** |
 | Pulling the stick at any moment, crashes, ColorOS killing Termux | Copy-on-write: new files first, then the index; the newest valid index wins | Old state or new state, never a broken one. Leftovers are cleaned up at the next open |
 | A web page in Chrome trying to reach the data | Apps reach data only through a Unix socket in `~/.stickhub/` (no TCP, so no browser can connect) with a per-app token; hub API token as today | Refused |
 | One app reading another app's data | The token decides the namespace `<app-id>/`; every path is checked | Refused |
@@ -68,20 +68,18 @@ Not visible: file names, folders, how many files each app has, single file sizes
 ## 3. Building blocks (node:crypto, zero dependencies)
 | Job | Primitive (standard) | Node | Settings |
 |---|---|---|---|
-| Passphrase -> key | Argon2id (RFC 9106) | `crypto.argon2('argon2id', ...)`, Node 24 | start: m = 64 MiB, t = 3, p = 4 (RFC 9106 second recommended option), tuned to about 1-2 s on the phone from p9's numbers **(pending p9)**. Stored per slot |
-| Passphrase -> key if Argon2id is missing | scrypt (RFC 7914) | `crypto.scrypt` | N = 2^17, r = 8, p = 1 (128 MiB), tuned the same way |
+| Passphrase -> key | Argon2id (RFC 9106) | `crypto.argon2('argon2id', ...)`, Node 24 | m = 256 MiB, t = 3, p = 4: 0.9 s and 310 MB peak on the phone **(p9)**. RFC 9106's second option (64 MiB) takes only 0.2 s there, so we afford 4x the memory. Stored per slot |
+| Passphrase -> key if Argon2id is missing | scrypt (RFC 7914) | `crypto.scrypt` | N = 2^17, r = 8, p = 1 (128 MiB): 0.54 s on the phone **(p9)**. Only for a device without Argon2id |
 | High-entropy secret -> key, subkeys | HKDF-SHA256 (RFC 5869) | `crypto.hkdf` | 32-byte output, labels below |
-| Encrypt and authenticate | AES-256-GCM, 96-bit nonce, 128-bit tag | `createCipheriv('aes-256-gcm')` | ChaCha20-Poly1305 instead if p9 shows AES is slow (no AES instructions) |
+| Encrypt and authenticate | AES-256-GCM, 96-bit nonce, 128-bit tag | `createCipheriv('aes-256-gcm')` | 206 MB/s on the phone **(p9)**, 10x the stick. ChaCha20-Poly1305 is a bit faster there (271 MB/s), but AES-GCM is also in WebCrypto and crypto is not the bottleneck |
 | Long files | STREAM (Hoang et al. 2015), as in `age`: 64 KiB segments, nonce = 11-byte segment number + 1-byte "last" flag | AES-256-GCM per segment | per-file key, so nonces never repeat |
 | Content ids, header MAC | HMAC-SHA256 | `createHmac` | keys derived from the data key |
 | Hide sizes | Padmé padding (Nikitin et al., PETS 2019), at most 12% extra | - | minimum 64 KiB per file |
 | Randomness | OS random | `crypto.randomBytes` | - |
-| Device key | RSA-2048, PKCS#1 v1.5 signature with SHA-256 (deterministic) | `termux-keystore sign` **(pending p9)** | key never leaves the phone |
+| Device key | RSA-2048, PKCS#1 v1.5 signature with SHA-256 (deterministic) | `termux-keystore sign`: 256 raw bytes, 1.1-1.3 s per call **(p9)** | key inside secure hardware, never leaves the phone |
 
-Node 24.22.1 here: all of these pass their RFC test vectors (Argon2id, scrypt, HKDF, AES-GCM, ChaCha20-Poly1305).
-Termux's Node links Termux's own OpenSSL, so the phone may differ **(pending p9)**.
-Off the phone (the agent's 4-core cloud machine, for scale only): Argon2id 64 MiB t=3 p=4 took 92 ms; 256 MiB p=4
-took 1.3 s.
+On the phone (Node 24.22.1, OpenSSL 3.6.5) all of these give the published RFC answers (Argon2id, scrypt, HKDF,
+AES-GCM, ChaCha20-Poly1305) **(p9)**. HKDF takes 32 us, SHA-256 runs at 1.1 GB/s.
 
 ## 4. Key hierarchy
 ~~~
@@ -105,31 +103,34 @@ DK (32 random bytes, one per epoch)
   another vault or slot, and changed settings make it fail instead of doing something weaker.
 
 ### 4.2 Passphrase slot (a)
-- Exactly one. Works on any device with the hub (the "any device" slot). Official Node 24 builds have Argon2id; if
-  p9 shows the phone's Node lacks it, the slot uses scrypt from the start, so every device can open it.
+- Exactly one. Works on any device with the hub (the "any device" slot). The phone's Node has Argon2id **(p9)**, as
+  do official Node 24 builds (Windows later). For a device without it, the slot would be made with scrypt instead.
 - Passphrase normalized with NFKC (Polish letters typed on another keyboard give the same bytes), then Argon2id with a
   16-byte random salt and `associatedData = vault id + slot id` (or scrypt with the salt). The slot records its KDF.
 - The KDF settings are read from the stick before unlocking, so they are checked: Argon2id m <= 1 GiB, t <= 10,
   p <= 8; scrypt N <= 2^20. Anything else is refused (a tampered stick must not make the phone run out of memory).
-- This slot is what a stick finder attacks offline. Argon2id makes each guess slow and memory-heavy (64 MiB or more
-  per guess, on any hardware), but a short or common passphrase still falls. Rule proposal: at least 5 random words or 20 characters (open question 5).
+- This slot is what a stick finder attacks offline. Argon2id makes each guess slow and memory-heavy (256 MiB per
+  guess, on any hardware), but a short or common passphrase still falls. Rule proposal: at least 5 random words or 20 characters (open question 5).
 
-### 4.3 Device slot (b) **(pending p9)**
+### 4.3 Device slot (b) **(p9)**
 - One per enrolled phone. The phone keeps two things, never on the stick, never in git:
-  1. an RSA-2048 key in the Android Keystore, made by `termux-keystore generate`, which needs a recent fingerprint or
-     pattern (section 5 says how recent), and
+  1. an RSA-2048 key in the Android Keystore (inside secure hardware), made by `termux-keystore generate -u 30`, which
+     signs only in the 30 s after a fingerprint or pattern unlock (section 5), and
   2. a 32-byte **device secret** in `~/.stickhub/vault/<vault id>.json` (mode 600), with the key's alias and the slot id.
 - The slot on the stick holds a random 32-byte challenge and a salt. To open it:
   `sig = Keystore sign(challenge, SHA256withRSA)`; `KEK_dev = HKDF-SHA256(ikm = sig + device secret, salt,
   info = "StickHub vault v1 device" + vault id + slot id)`; unwrap DK.
 - This needs the signature to be **the same every time** for the same challenge. RSA PKCS#1 v1.5 is deterministic by
-  its math; ECDSA is not (random), so EC keys cannot be used **(pending p9 confirms both)**. Enrolling signs twice
-  and refuses the slot if the two differ. The signature is never stored or logged.
+  its math; ECDSA is not (random), so EC keys cannot be used. **p9**: 5 signatures of one challenge, across locks and
+  unlocks, were identical; two ECDSA signatures differed. Enrolling still signs twice and refuses the slot if they
+  differ. The signature is never stored or logged.
+- `sign` prints the 256 raw signature bytes. When the key is not open it prints **nothing and still exits 0** **(p9)**,
+  so the adapter accepts exactly 256 bytes and treats anything else as "not unlocked".
 - The fingerprint and the 9-dot pattern are never an input to any key derivation. Android checks them (with growing
   waits after wrong tries) and then allows the Keystore key to sign. A pattern has about 390,000 combinations, but an
   attacker with only the stick has nothing to try them against: the secret is the hardware key in that one phone.
-- Why the device secret too: if the Keystore key is usable without the user (result C in section 5), or if
-  `termux-keystore` is missing (result D), the slot still needs a file from that phone's private storage.
+- Why the device secret too: defence in depth. If the Keystore ever signed without the user (a Termux:API change),
+  the slot would still need a file from that phone's private storage.
 - Android deletes Keystore keys that need user auth when the screen lock is turned off (per Android docs; to confirm).
   Clearing the Termux:API app's data, reinstalling Termux or a factory reset also lose it. Then the slot fails and
   the passphrase is used once to enroll again (section 7.8). Losing a device slot never loses data.
@@ -157,22 +158,36 @@ DK (32 random bytes, one per epoch)
 | Device secret, key alias | `~/.stickhub/vault/` on that phone | stick, git, backups you share |
 | Plain file contents and names | hub and app memory, the page in Chrome | stick, phone files, logs |
 
-## 5. Device slot: what probe 9 decides
-`termux-keystore generate -u N` makes a key that works only for N seconds after the user unlocked the phone
-(Android's "auth validity duration"). Expected: there is no prompt on each use, because a per-use prompt needs a
-fingerprint prompt tied to the key (a BiometricPrompt with a CryptoObject), and `termux-keystore` has no way to show
-one. So the gate is probably **time-based only** **(pending p9)**. What we build for each possible result:
+## 5. Device slot: what probe 9 showed, and the build
+Measured **(p9, termux-api 0.60.0)**:
+- `termux-keystore` works. One call (list, sign) takes 1.1-1.3 s; making a key 1.3-1.7 s. The keys are inside
+  secure hardware; for a key made with `-u N` the auth is required and enforced by that hardware.
+- It is a **time window only**: the key signs for N seconds after the phone was unlocked with the fingerprint or the
+  pattern, and refuses after that. No prompt shows when it signs.
+- A successful `termux-fingerprint` also opens the window. Its prompt offers the pattern too. (Tested: the fingerprint
+  in the prompt, and the pattern on the lock screen. That the pattern typed *in the prompt* opens the window is
+  expected; probe 10 checks it.) The prompt takes a title (`-t`), so it can say "Unlock StickHub".
+- Unclear: started from the background while the StickHub app was in front, the prompt worked (fingerprint accepted,
+  sign ok, 4.3 s), but it was not seen "over StickHub". Where it showed, and what was in front afterwards, matters
+  for the plug-in flow (open question 1).
 
-| p9 result | What we build | Honest strength |
-|---|---|---|
-| A. A prompt shows on every sign | Key with auth; the sign itself shows the prompt. No extra step | Best: each unlock of the vault needs your finger or pattern |
-| B. Time window only, and `termux-fingerprint` success opens it | Key with `-u 10`. The hub calls `termux-fingerprint`, then signs within 10 s. Pattern: in that prompt if it offers it; else cancel and use the passphrase, or lock and unlock the phone with the pattern and tap Unlock within 10 s | The key never leaves the phone. But any process running as Termux can also sign during the 10 s after **any** unlock of the phone, even a normal one. That only matters for malware, which is out of scope |
-| C. Time window only, opened only by the lock screen | Key **without** `-u`, plus `termux-fingerprint` as a UI gate before signing | The fingerprint is then a door in the UI, not in the cryptography. Still true: the stick alone and a copy of Termux's files are useless (the key stays in the hardware); a locked phone cannot run Termux. Lost: protection against code running as Termux behind a locked screen (out of scope anyway) |
-| D. No `termux-keystore`, Termux:API does not answer, signatures not the same each time, or key not in secure hardware | Safest: **passphrase at every hub start**, no device slot. Optional, only if Fabian chooses it: a "soft" device slot from the device secret alone | Passphrase each time: as strong as the passphrase. Soft slot: a copy of `~/.stickhub/` plus the stick opens the data, so never back up `~/.stickhub/` |
+The build:
+- Key: RSA-2048, `generate -u 30` (open question 1).
+- Unlock: first try `sign` (1.2 s). If the phone was unlocked in the last 30 s (you usually unlock it, then plug in
+  the stick or tap the widget), that is all: no extra touch. If `sign` gives nothing:
+  `termux-fingerprint -t "Unlock StickHub"` (fingerprint, or the pattern in the same prompt), then `sign` again.
+- Cancelled or failed: the passphrase or the paper code.
 
-p9 also says whether `termux-fingerprint` can show its prompt over the StickHub app when started from the
-background (the real flow), how long one Termux:API call takes (the speed budget), and whether the key is in secure
-hardware (`list -d`).
+Honest strength:
+- The key never leaves the phone's secure hardware: the stick alone, or a copy of Termux's files, is useless.
+- The fingerprint or pattern gates the key only through time. Any process running as Termux can sign during the
+  30 s after **any** unlock of the phone, even a normal one, with no prompt. That matters only for malware on the
+  phone (out of scope); a person who holds your unlocked phone can open the hub anyway.
+- A locked phone cannot run Termux, and after 30 s the key refuses until the next unlock.
+
+If it ever stops working (a Termux:API update changes the output, signatures stop being the same, the key is gone),
+the device slot fails, the passphrase opens the vault, and the phone enrolls again (section 7.8). The safest
+fallback, if the Keystore could not be trusted at all, stays: passphrase at every hub start, no device slot.
 
 ## 6. File format
 
@@ -277,10 +292,10 @@ Key changes (setup, add device, change passphrase, new paper code, remove device
 ### 7.1 Setup (once, on the phone that has the data today)
 1. Update every device first (`git pull`), so no old hub writes plain data to the stick (open question 7).
 2. In the hub: **Set up the vault** (or `node hub/cli.mjs vault setup`). Doctor checks: stick, Termux:API, screen lock.
-3. Choose the passphrase (typed twice, strength hint). Argon2id runs (about 1-2 s, **pending p9**).
+3. Choose the passphrase (typed twice, strength hint). Argon2id runs (0.9 s on the phone, p9).
 4. The paper code is shown once; you write it down and type two groups back.
-5. This phone's device slot is enrolled: Keystore key made, fingerprint asked, two signatures compared (section 4.3).
-   If p9 gives result D: skipped (passphrase at every start) unless you chose the soft slot.
+5. This phone's device slot is enrolled: Keystore key made (`-u 30`), fingerprint asked, two signatures compared
+   (section 4.3).
 6. Migration: a normal plain sync first, so phone and stick agree. Then every file goes into the phone replica, the
    stick replica is written, and **every file is read back and compared** with the original. Only then the plain
    copies are removed: phone `data/`, `.trash/`, `sync-state.json`; stick `HUB/data/<app>/` and `HUB/.trash/*/data/`.
@@ -292,7 +307,8 @@ Writes: header (2 copies) on both sides, packs and index on both sides, the devi
 ### 7.2 Unlock (daily)
 1. The hub starts locked (widget, or the watcher at plug-in). The page shows the lock screen; no app can start.
 2. If this phone has a device slot, the hub starts the unlock at once, in parallel with opening the page:
-   `termux-fingerprint` (if result B or C) -> `termux-keystore sign` -> HKDF -> unwrap DK -> check the header MAC ->
+   `termux-keystore sign` (no touch if the phone was unlocked in the last 30 s; else `termux-fingerprint`, then sign
+   again) -> HKDF -> unwrap DK -> check the header MAC ->
    read the newest index (phone replica; in data-on-stick mode the stick's) -> tiles.
 3. Cancelled or failed: buttons **Fingerprint**, **Passphrase**, **Paper code**.
 4. Phone copy mode needs no stick to unlock. After unlocking, a plugged-in stick syncs in the background.
@@ -350,7 +366,7 @@ What stays possible: whoever can unlock the lost phone can read what was on it u
 after the rekey.
 
 ### 7.8 When the device key stops working
-Screen lock removed, Termux:API data cleared, new phone, or result C/D changes: the device slot fails with a clear
+Screen lock removed, Termux:API data cleared, new phone, or a Termux:API update that changes `sign`: the device slot fails with a clear
 message ("This phone's key is gone"). Unlock with the passphrase; the old slot is replaced by a new one.
 
 ## 8. Apps, Notebook, sync and atomic writes
@@ -437,27 +453,30 @@ the stick is plugged in.
 | Mounted -> watcher sees it | 0-2 s (poll every 2 s) | 0-1 s: poll every 1 s (one read costs 0.7 ms) |
 | Stick found -> hub started (cold) | 1.0-1.1 s (runs 4, 6) | same |
 | Stick found -> page open, logged in | about 2-3 s (runs 4, 6) | same, in parallel with the unlock |
-| Fingerprint prompt shows | - | about 1 s (one Termux:API call; `termux-usb -l` took 1.2 s) **(pending p9)** |
-| Your touch | - | about 0.5-1 s |
-| Keystore sign | - | about 1 s **(pending p9)** |
-| Unwrap DK, check header | - | under 10 ms (HKDF about 14 us on the agent's machine) |
+| Keystore sign (phone unlocked in the last 30 s) | - | 1.1-1.3 s **(p9)** |
+| Otherwise: failed sign + prompt and touch + sign again | - | 1.2 + about 3 + 1.2 s (`termux-fingerprint` took 3.2 s with the touch, **p9**) |
+| Unwrap DK, check header | - | under 10 ms (HKDF 32 us on the phone, **p9**) |
 | Read + decrypt the index | - | about 0.1-0.2 s on the stick (estimate) |
-| **Plug-in -> open** | **6.6 s** (phone copy), **9.1 s** (data on the stick, cold hub) | estimate below |
+| **Plug-in -> open** | **6.6 s** (phone copy), **9.1 s** (data on the stick, cold hub) | see the two cases below |
 
-Done one after the other, the unlock adds about 2.5-3 s: 9.1 s would become about 12 s. To stay at 10 s or less:
-1. Start the unlock as soon as the hub starts, in parallel with opening the page (the prompt shows over Chrome
-   while the page loads, **pending p9**: prompt from the background).
-2. Poll mountinfo every 1 s instead of 2 s.
-3. Unlock from the header copy on the phone, without waiting for the stick (phone copy mode opens its own replica;
-   sync runs after).
-4. If the hub is already unlocked (widget tapped earlier), plug-in adds no unlock at all: today's times.
-Estimate: 8-10 s for a cold hub with the fingerprint, about 6-9 s when already unlocked. Probe 10 (after the build)
-measures it. The passphrase path is slower (typing + Argon2id) and is not the daily path.
+The unlock starts as soon as the hub runs, in parallel with the page opening (2-3 s after the stick is found), and
+from the header copy on the phone, so it does not wait for the stick.
+- **Fast path** (the phone was unlocked in the last 30 s, the usual case when you pick it up and plug in the stick):
+  one sign, 1.2 s, hidden behind the page load. Plug-in -> open stays close to today: about 6.6-9.5 s (estimate).
+- **Prompt path** (unlocked longer ago): about 5.4 s after the hub starts. Plug-in -> open about 10-13 s (estimate):
+  **over the goal**.
+To avoid or shorten the prompt path:
+1. Keep the hub running and unlocked: the widget tap starts it and unlocks it on the fast path (you just unlocked the
+   phone to tap). Plug-in then needs no unlock at all, unless the hub auto-locked.
+2. Poll mountinfo every 1 s instead of 2 s (0.7 ms per read): 0.5 s less on average.
+3. Probe 10 (after the build) measures both paths, and whether two Termux:API calls (open the page, show the prompt)
+   can run at the same time.
+The passphrase path is slower (typing + 0.9 s Argon2id) and is not the daily path.
 
 ## 10. Tests
 All `node:test`, all must pass on the phone. The Keystore and Termux:API sit behind an adapter
 (`platform/keystore.mjs`) with a fake: a deterministic fake signer (HMAC of the challenge), a random one (to test
-the refusal), and one that says "not authenticated".
+the refusal), and one that prints nothing and exits 0 (what `termux-keystore sign` does when the window is closed, p9).
 - **Known answers**: Argon2id (RFC 9106), scrypt (RFC 7914), HKDF (RFC 5869), AES-256-GCM, ChaCha20-Poly1305 (RFC
   8439) on the device itself; Argon2id tests skip with a clear message where it is missing (scrypt path tested).
 - **Fixtures**: a small vault made with fixed keys and nonces, committed under `test/fixtures/` (test keys only).
@@ -492,20 +511,24 @@ the refusal), and one that says "not authenticated".
 2. Store: header, index, packs, commit, cleanup, compaction. Unplug tests.
 3. Data API + client module; port the sample apps, then the Notebook.
 4. Sync between replicas (reusing `planData`), migration, rollback check.
-5. Keystore adapter as p9 decides, lock screen, setup, devices page, CLI (`vault setup|status|lock|devices|...`),
+5. Keystore adapter (try sign, else `termux-fingerprint`, then sign), lock screen, setup, devices page, CLI (`vault setup|status|lock|devices|...`),
    doctor checks (Termux:API, screen lock, Argon2id).
 6. START-HERE.txt and `cli.mjs setup` for new phones. Probe 10 on the phone.
 
 ## 12. Open questions
-1. **Device slot** (after p9): A, B, C or D in section 5? For B: is a 10 s window right? For D: passphrase at every
-   start, or the soft slot?
+1. **Device slot** (p9: time window, opened by the fingerprint or the pattern). (a) Fast path with `-u 30` (no touch
+   if the phone was unlocked in the last 30 s), or always show the prompt (then `-u 10`; plug-in -> open about
+   10-13 s)? (b) Fabian: in p9's background step, where did the prompt show, and what was in front after the touch,
+   StickHub or Termux? If Termux comes to the front, the hub must bring the page back (one more `termux-open-url`,
+   about 1.5 s).
 2. **Phone copy encrypted too** (this design) so "locked" holds on the phone? The alternative keeps plain files on
    the phone and apps unchanged, but then only the stick is locked.
 3. **Apps use the data API** instead of `HUB_DATA_DIR` (Notebook port, sample apps). Agreed?
 4. **Auto-lock**: 5 min with no visible hub page? Lock when the stick is pulled in data-on-stick mode?
 5. **Passphrase rule**: own passphrase of at least 5 words or 20 characters, or the hub generates words (needs a
    word list in the repo, about 2,000-8,000 words)?
-6. **Argon2id settings** after p9: target about 1-2 s on the phone. More memory or more time?
+6. **Argon2id settings**: 256 MiB, t = 3, p = 4 (0.9 s, 310 MB peak on the phone)? Or 512 MiB (about 2 s, more
+   memory pressure, and ColorOS may close other apps)?
 7. **Old hub versions**: "update every device before setup" enough, or rename the stick marker so an old hub ignores
    a vaulted stick entirely (it would otherwise still copy plain phone data into `HUB/data/<app>/`)?
 8. **Flash remnants**: data stored plain on this stick before the vault may stay on its chips. Set up the vault on a
