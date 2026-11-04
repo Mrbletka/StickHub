@@ -116,3 +116,15 @@ The rest of the 6.6 s is the mount (~1 s after USB), the 2 s poll, and the page 
 The 17.6 s is mostly the time before the stick was mounted and seen (probe 1 measured about 1 s from USB to mount,
 plus up to 2 s polling), so it needs a re-run to tell. Test fix: procman test start timeout 1.5 s -> 6 s (the phone is
 slower under load: "nothing answered on port 47101 in time").
+
+## Run 6 - 2026-11-04: probe 8 again, app data on the stick (code ad97a84)
+| Step | Result |
+|---|---|
+| Enter -> page open and logged in (hub cold start) | **9.1 s** (goal 10 s); stick found -> hub started 1.0 s -> page open 2.2 s |
+| note written in the Notebook | landed on the stick |
+| pull -> hub saw it | 12 ms after the mount vanished |
+| apps stopped | 54 ms; the hub kept running; "Stick removed" shown |
+| plug back -> data on the stick again | 2.3 s; the pull was reported; apps not restarted by themselves |
+
+Run 5's 17.6 s was the stick showing up late, not the hub. Data-on-stick mode is ready; it stays off until the owner
+switches it on (dataOnStick in ~/.stickhub/settings.json).
