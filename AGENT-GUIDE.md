@@ -117,6 +117,11 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
   Copy only changed files, keep the stick's hash list in one file, never re-hash the whole stick on each sync.
 - Verify every copy by hash. Limit parallelism (FUSE is slow). Show progress. Ignore .git, *.part, *.tmp, node_modules.
 - Lock file on the stick (HUB/.lock: device id + time) with stale-lock detection.
+- Sync runs in the background, shows progress and can be cancelled. A cancelled or interrupted run is safe to resume:
+  every file write is atomic (.part, fsync, rename), and every step is re-checked by hash on the next run.
+- Everything on the stick is untrusted input: reject "..", absolute paths and odd names, accept only app ids [a-z0-9-],
+  limit file sizes and file counts. Sync never runs or imports code from the stick on the phone.
+- `stick init` never touches an existing HUB/ or any other file on the stick unless --force is passed.
 
 ## Watcher (phone only, hub/watcher.mjs, runs in Termux)
 - Poll `/proc/self/mountinfo` every ~2 s (0.7 ms per read). `termux-usb -l` is too heavy to poll (1.2 s per call).
@@ -128,13 +133,15 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
 - If opening Chrome from the background fails, show a termux-notification with a tap action instead.
 
 ## Build order (stop after each phase and report)
+A finished phase is recorded here with its commit hash (no git tags).
 1. Core + engines (node-server, static) + UI + 2 sample apps. Done when `node hub/server.mjs` shows the grid, start/stop works and ports are freed.
+   **Done: 3b45c50** (tested on the phone 2026-11-04).
 2. Stick layout + sync CLI (plan, run, conflicts, trash, unplug-safe). Test with a simulated interrupted copy.
 3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
 4. Windows launcher + portable Node (design only until I ask).
 
 ## Delivery
 - Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
-- Tag the end of each phase (`phase-1-done`, `phase-2-done`, ...).
+- Record the end of each phase under "Build order" with its commit hash. No git tags.
 - After each push: the exact commands to run on the phone and the expected output.
 - Short explanations, simple English.
