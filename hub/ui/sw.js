@@ -2,7 +2,7 @@
 // Network first (the hub is local and fast, so a git pull is visible at once); the cache is only the fallback.
 // Bump CACHE when the SHELL list changes.
 
-const CACHE = 'stickhub-v2';
+const CACHE = 'stickhub-v3';
 const SHELL = ['/', '/app.css', '/app.js', '/api.js', '/player.js', '/stick.js', '/offline.html',
   '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon-maskable-512.png'];
 
