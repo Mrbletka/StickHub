@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Notebook</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #f2f2f2; font-family: system-ui, sans-serif; }
+  body { display: grid; place-items: center; text-align: center; touch-action: manipulation; user-select: none;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  h1 { font-size: 28px; margin: 0 0 12px; }
+  p { color: #8a8a8a; }
+  button { all: unset; margin-top: 20px; padding: 16px 28px; border-radius: 16px; background: #5df2a0; color: #002814; font-weight: 700; font-size: 18px; }
+  button:active { transform: scale(.97); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Notebook</h1>
+  <p>Starter app. Saved count: <b id="count">…</b></p>
+  <button id="add">+1 and save</button>
+</main>
+<script type="module">
+  // Saves go to the app's own server (PUT /api/save), which keeps them in HUB_DATA_DIR: they sync with the stick.
+  // Do not keep saves in localStorage or IndexedDB: browser storage is not synced.
+  const out = document.getElementById('count');
+  let save = await (await fetch('api/save')).json();
+  out.textContent = save.count ?? 0;
+  document.getElementById('add').onclick = async () => {
+    save = { ...save, count: (save.count ?? 0) + 1 };
+    out.textContent = save.count;
+    const r = await fetch('api/save', { method: 'PUT', body: JSON.stringify(save) });
+    if (!r.ok) out.textContent = 'save failed';
+  };
+</script>
+</body>
+</html>
