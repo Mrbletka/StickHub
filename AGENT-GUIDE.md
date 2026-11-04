@@ -70,7 +70,20 @@ HUB/                  on the stick
   runtime/            optional portable Node for Windows (later)
   .trash/<date>/      deleted files go here, never hard-deleted
 ~~~
-Two run modes: (1) phone mode (default, fast): run from the clone. (2) portable mode: run straight from the stick, for a PC or another device.
+Two run modes: (1) phone-copy mode (default, fast): run from the clone. (2) stick mode: run straight from the stick.
+
+## Stick mode
+- `node hub/cli.mjs open --from-stick`, or the setting `runFromStick: true` for the watcher, starts
+  <stick>/HUB/hub/server.mjs. Apps from HUB/apps, data in HUB/data/<id>/. No sync in this mode: the stick is the live storage.
+- The launcher (hub/stickmode.mjs, runs from the phone clone) starts stick code only if HUB/hub and HUB/apps are exactly a
+  commit the phone's git knows (git blob hashes, no extra files, no links). Otherwise it refuses and lists the differences.
+- Before starting: finish an interrupted sync (HUB/.journal.json), and if HUB/.running.json is still there (the stick was
+  pulled while the hub ran from it) report it and remove leftover *.part files in HUB/data.
+- Same fixed port, token and settings (all in ~/.stickhub on the phone, never on the stick). Logs: logs/hub-stick.log.
+- A running phone-copy hub is stopped first (the port is fixed).
+- The hub checks every 0.5 s that its stick is still there. When it goes: apps get SIGTERM with a 1.2 s grace (all stopped
+  within 2 s), the page shows "Stick removed", the hub exits (its own code is on the stick). A clean stop removes the marker.
+- On a PC (later) there is no git clone to check against: that needs its own trust step (phase 4 design).
 The hub also works with no stick plugged in. A setting `requireStick` makes it refuse to start without the stick (cartridge feel).
 
 ## App manifest (apps/<id>/app.json)
@@ -149,6 +162,7 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
   every file write is atomic (.part, fsync, rename), and every step is re-checked by hash on the next run.
 - Everything on the stick is untrusted input: reject "..", absolute paths and odd names, accept only app ids [a-z0-9-],
   limit file sizes and file counts. Sync never runs or imports code from the stick on the phone.
+  The one exception is stick mode (below), and only after the launcher has checked the code against the phone's git.
 - `stick init` never touches an existing HUB/ or any other file on the stick unless --force is passed.
 
 ## Watcher (phone only, hub/watcher.mjs, runs in Termux)
