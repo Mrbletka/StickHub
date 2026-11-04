@@ -9,6 +9,7 @@ import { ProcessManager } from './procman.mjs';
 import { createApi, json } from './api.mjs';
 import { serveStatic, send } from './static-files.mjs';
 import { codeCommit } from './version.mjs';
+import { StickService } from './sync/service.mjs';
 
 export const HUB_PORT = 8787;
 const HUB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -17,7 +18,9 @@ const ROOT = dirname(HUB_DIR);
 /**
  * Build the hub (does not listen yet).
  * @param {{root?: string, appsDir?: string, dataDir?: string, port?: number,
- *   portRange?: {from: number, to: number}, startTimeoutMs?: number}} [opts]
+ *   portRange?: {from: number, to: number}, startTimeoutMs?: number,
+ *   stick?: {listVolumes?: Function, pollMs?: number, autoSync?: boolean, device?: string, git?: object}}} [opts]
+ *   stick: options for the stick service (tests pass fakes)
  */
 export async function createHub(opts = {}) {
   const root = opts.root || ROOT;
@@ -29,12 +32,9 @@ export async function createHub(opts = {}) {
   });
   await procman.reload();
   const commit = await codeCommit(root).catch(() => null);
-  const status = () => ({
-    name: 'StickHub', commit, engines: [...engines.keys()], engineErrors,
-    // Filled in by the stick module in phase 2.
-    stick: { state: 'unknown' },
-  });
-  const api = createApi({ procman, status });
+  const stick = new StickService({ root, procman, ...opts.stick });
+  const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status() });
+  const api = createApi({ procman, stick, status });
   const uiDir = join(HUB_DIR, 'ui');
 
   const server = createServer(async (req, res) => {
@@ -62,14 +62,19 @@ export async function createHub(opts = {}) {
   });
 
   return {
-    server, procman,
-    /** Start listening. Rejects with EADDRINUSE when the port is taken. */
+    server, procman, stick,
+    /** Start listening, then start watching for the stick. Rejects with EADDRINUSE when the port is taken. */
     listen: () => new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(`http://127.0.0.1:${server.address().port}/`); });
+      server.listen(port, '127.0.0.1', () => {
+        server.off('error', reject);
+        stick.start().catch((e) => console.error(`stick: ${e.message}`));
+        resolve(`http://127.0.0.1:${server.address().port}/`);
+      });
     }),
-    /** Stop all apps and the server. */
+    /** Stop syncing, all apps and the server. */
     async close() {
+      await stick.stop();
       await procman.stopAll();
       api.close();
       server.closeAllConnections();

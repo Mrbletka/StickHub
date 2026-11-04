@@ -5,16 +5,17 @@ import { ID_RE } from './manifest.mjs';
 
 /**
  * Create the API handler.
- * @param {{procman: import('./procman.mjs').ProcessManager, status: () => object}} hub
+ * @param {{procman: import('./procman.mjs').ProcessManager, stick: import('./sync/service.mjs').StickService, status: () => object}} hub
  * @returns {{handle: (req, res, path: string) => Promise<void>, close: () => void}}
  */
 export function createApi(hub) {
-  const { procman } = hub;
+  const { procman, stick } = hub;
   const clients = new Set();
   let heartbeat = null;
 
   // Push every app change and (for clients that asked) log lines over SSE.
   procman.on('change', (app) => broadcast('app', app));
+  stick.on('change', () => broadcast('status', hub.status()));
   procman.on('log', ({ id, entry }) => {
     for (const c of clients) if (c.logsFor === id) sse(c.res, 'log', { id, ...entry });
   });
@@ -49,6 +50,14 @@ export function createApi(hub) {
     if (req.method === 'GET' && path === '/api/apps') return json(res, 200, procman.list());
     if (req.method === 'POST' && path === '/api/apps/reload') return json(res, 200, await procman.reload());
     if (req.method === 'GET' && path === '/api/events') return openEvents(req, res, url);
+    if (req.method === 'GET' && path === '/api/stick') return json(res, 200, stick.status());
+    if (req.method === 'POST' && path === '/api/sync') {
+      const what = url.searchParams.get('what') || 'all';
+      if (!['all', 'data', 'code'].includes(what)) return json(res, 400, { error: 'what: all, data or code' });
+      const started = stick.syncNow(what);
+      return json(res, started ? 202 : 409, started ? stick.status() : { error: 'No stick with a HUB is connected.', stick: stick.status() });
+    }
+    if (req.method === 'POST' && path === '/api/sync/cancel') { stick.cancel(); return json(res, 200, stick.status()); }
     if (m && req.method === 'POST' && ['start', 'stop', 'restart'].includes(m[2])) {
       try {
         return json(res, 200, await procman[m[2]](m[1]));
