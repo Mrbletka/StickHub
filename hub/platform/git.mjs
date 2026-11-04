@@ -54,6 +54,21 @@ export function createGit(root) {
       if (r.code === 1) return false;
       return null;
     },
+    /**
+     * Git's blob hash (sha1 of "blob <size>\\0" + content) of every file under dirs in a commit.
+     * @returns {Promise<Map<string, string>|null>} null if the commit is unknown here
+     */
+    async treeBlobs(commit, dirs) {
+      if (!/^[0-9a-f]{40}$/.test(commit)) return null;
+      const r = await git(root, ['ls-tree', '-r', '-z', commit, '--', ...dirs]);
+      if (r.code !== 0) return null;
+      const out = new Map();
+      for (const rec of r.stdout.split('\0').filter(Boolean)) {
+        const m = /^\d+ blob ([0-9a-f]{40})\t(.+)$/s.exec(rec);
+        if (m) out.set(m[2], m[1]);
+      }
+      return out;
+    },
     /** git pull --ff-only (setting autoPull). Returns a short result text, never throws. */
     async pullFastForward() {
       try {

@@ -30,14 +30,15 @@ export async function deviceId(home = stickhubHome()) {
   return id;
 }
 
-const DEFAULT_SETTINGS = { requireStick: false, autoPull: false };
+const DEFAULT_SETTINGS = { requireStick: false, autoPull: false, runFromStick: false };
 
 /**
  * Settings from ~/.stickhub/settings.json (all optional):
  *   requireStick: the hub refuses to start without the stick (cartridge feel). Default false.
  *   autoPull: the watcher runs `git pull --ff-only` when the stick is plugged in. Default false.
+ *   runFromStick: the watcher starts the hub from the stick (stick mode) instead of the phone copy. Default false.
  * @param {string} home
- * @returns {Promise<{requireStick: boolean, autoPull: boolean}>}
+ * @returns {Promise<{requireStick: boolean, autoPull: boolean, runFromStick: boolean}>}
  */
 export async function loadSettings(home = stickhubHome()) {
   let j;

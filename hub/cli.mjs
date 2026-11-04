@@ -5,7 +5,7 @@
 //   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
 //   node hub/cli.mjs login [--open]      fresh one-time login link (if the hub page says "Log in")
-//   node hub/cli.mjs open                start the hub if needed and open it
+//   node hub/cli.mjs open [--from-stick] start the hub if needed and open it (--from-stick: stick mode)
 //   node hub/cli.mjs hub stop            stop the hub and its apps
 //   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
@@ -25,6 +25,7 @@ import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs'
 import { openUrl } from './platform/termux.mjs';
 import { watchCommand, widgetInstall } from './cli-watch.mjs';
 import { createApp } from './scaffold.mjs';
+import { startStickHub } from './stickmode.mjs';
 import { loadApp } from './apps.mjs';
 import { loadEngines } from './engines.mjs';
 
@@ -36,7 +37,7 @@ const USAGE = `Usage:
   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
   node hub/cli.mjs login [--open]
-  node hub/cli.mjs open
+  node hub/cli.mjs open [--from-stick]
   node hub/cli.mjs hub stop
   node hub/cli.mjs watch start|stop|status
   node hub/cli.mjs widget install
@@ -49,6 +50,7 @@ function parse(argv) {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
+    else if (a === '--from-stick') flags.fromStick = true;
     else if (a === '--name' || a === '--mount' || a === '--engine') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
@@ -182,10 +184,17 @@ async function login(flags) {
   return 0;
 }
 
-/** Start the hub in the background if needed, then open it with a login link. */
-async function open() {
-  const r = await ensureHub(ROOT);
-  if (r.started) console.log(`Started the hub (pid ${r.pid}, log: logs/hub.log).`);
+/** Start the hub in the background if needed (from the stick with --from-stick), then open it with a login link. */
+async function open(flags) {
+  if (flags.fromStick) {
+    const s = await pickStick(flags);
+    const r = await startStickHub({ root: ROOT, home: stickhubHome(), mount: s.mount, git: createGit(ROOT), fsx: createFsx() });
+    for (const st of r.steps) console.log(st);
+    if (!r.already) console.log(`Hub running from the stick (pid ${r.pid}, log: logs/hub-stick.log). Pull the stick and it stops its apps.`);
+  } else {
+    const r = await ensureHub(ROOT);
+    if (r.started) console.log(`Started the hub (pid ${r.pid}, log: logs/hub.log).`);
+  }
   return login({ open: true });
 }
 
@@ -214,7 +223,7 @@ async function main(argv) {
   if (a === 'new') return newApp(b, flags);
   if (a === 'watch') return watchCommand(b, ROOT, stickhubHome());
   if (a === 'widget' && b === 'install') return widgetInstall(ROOT);
-  if (a === 'open') return open();
+  if (a === 'open') return open(flags);
   if (a === 'hub' && b === 'stop') {
     if (!(await hubRunning())) { console.log('The hub is not running.'); return 0; }
     console.log((await stopHub(stickhubHome())) ? 'The hub is stopping (apps first).' : 'The hub did not accept the stop.');
