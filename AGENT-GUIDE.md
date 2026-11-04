@@ -216,7 +216,8 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
   queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files
   beyond the 2 newest, never packs, damaged files or headers) when an index file or a header copy is damaged; none
-  at all when the order of the indexes is unclear. Compaction never runs while there are problems. At 200 files in
+  at all when the order of the indexes is unclear. maintain() (purge 30-day trash, compact, clean up) runs after the
+  first commit of a session and every 16 commits. Compaction never runs while there are problems. At 200 files in
   _index commits are refused (NEEDS_REPAIR). File times are never used.
 - `node hub/cli.mjs vault verify|export` (hub/cli-vault.mjs): passphrase only from the terminal (no echo), never argv,
   env or a file; export never writes plain files on a stick, in the vault folder or in this clone.

@@ -523,8 +523,17 @@ the stick is plugged in.
   confusion.
 
 ### 8.6 Compaction and cleanup
-- Runs when unlocked and idle (and at lock, if quick), inside the hub's write queue, one pack at a time, cancellable.
-- Merges small packs and packs with mostly dead data into packs of about 8 MiB; drops trash older than 30 days.
+- Runs inside the store's write queue, as `maintain()`: purge trash older than 30 days (store clock), compact if worth
+  it, then clean up. The store queues it after the first commit of a session and then every 16 commits; with nothing
+  to do it does no I/O.
+- Compaction (`compact.mjs`, one commit per call, stoppable between files): candidates are packs whose live bytes are
+  under 50% of their size, and live packs under 1 MiB; it runs only with at least 4 candidates or 4 MiB of dead bytes
+  in them, cheapest first, up to 16 MiB of live bytes per call. The live pieces move into new packs of about 8 MiB;
+  every affected file is read whole through the checked path (content id) before the commit; extents of files and
+  trash are updated; a piece shared by several files (dedupe) moves once; a file over several packs moves piece by
+  piece and keeps its part numbers. The old packs stay while the previous index uses them; a later full cleanup
+  removes them. Never while there are problems (full cleanup would be refused, so new packs would only fill the disk).
+- `emptyTrash(ids?)` removes trash entries for good (all, or some); `purgeTrash()` the ones older than 30 days.
 - Removes `.vx` files no index refers to (leftovers of a pull or crash) and old index files beyond the 2 newest.
 - Two levels (job 2 part 2, C1). **Full** does all of the above, only when nothing is damaged. **Light** runs when an
   index file or a header copy is damaged: it removes only index `.part` files and valid index files beyond the 2
@@ -715,6 +724,15 @@ Deviations and choices, with the reason:
   second miss is damage. Exit 1 on any failure.
 - The passphrase or paper code is read on the terminal in raw mode with no echo (`hub/cli-prompt.mjs`: typing, paste,
   bracketed paste, Backspace, Ctrl-U, Ctrl-C; escape sequences ignored). A stdin that is not a terminal is refused.
+
+### v1 step 2, part 2: trash and compaction (E)
+Built as described in 8.6: `emptyTrash`, `purgeTrash`, `compact({maxBytes, signal})`, `maintain()` (replaces the plain
+automatic cleanup). The commit path is shared: compaction and trash purging commit through the same pack + index
+`.part` + rename steps as a save. Tests: 300 saves over 20 notes then `maintain()` (at most 3 live packs, every note
+reads back), unplug at every step of a compaction, trash at 29 and 31 days with a fake clock, dedupe kept, a file
+over several packs, a read started before the compaction commit (this process's cleanup waits for running reads),
+no compaction while there are problems, a cancelled compaction writes nothing, `maintain()` with nothing to do writes
+nothing.
 
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),

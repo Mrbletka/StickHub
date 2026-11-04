@@ -157,7 +157,7 @@ test('no cleanup at all when the newest index on disk is not the one the store k
   assert.deepEqual(listing(t.dir), before);
 });
 
-test('a cleanup runs by itself every 16 commits, so index files cannot pile up', async () => {
+test('maintenance (with its cleanup) runs by itself, so index files cannot pile up', async () => {
   const t = await fresh();
   for (let i = 0; i < 40; i++) await t.store.write('n/counter.md', `v${i}`);
   while (t.store.status().lastCleanup === null) await new Promise((r) => setImmediate(r));
@@ -242,4 +242,14 @@ test('unplug at every step of a header write', async () => {
   const steps = await unplugAtEveryStep(t, (s) => s.writeHeader(next), 'header', headers);
   assert.ok(steps >= 10);
   assert.equal(headers.size, 2);
+});
+
+test('unplug at every step of a compaction', async () => {
+  const t = await fresh();
+  for (let i = 0; i < 6; i++) await t.store.write(`n/c${i}.md`, `compact me ${i}`);
+  const steps = await unplugAtEveryStep(t, async (s) => {
+    const r = await s.compact();
+    assert.equal(r.done, true, JSON.stringify(r));
+  }, 'compaction');
+  assert.ok(steps >= 9, `${steps} steps`);
 });

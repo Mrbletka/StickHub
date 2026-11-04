@@ -25,6 +25,8 @@ export class Draft {
     this.lower = new Map([...this.files.keys()].map((p) => [p.toLowerCase(), p]));
     this.extentsById = null;
     this.newBlobs = new Map(); // content id -> {data, path}: written in this commit
+    this.extraPacks = []; // packs built by compaction: {name, file}
+    this.extraSizes = new Map();
     this.changed = false;
   }
 
@@ -168,5 +170,41 @@ export class Draft {
     this.trash = this.trash.filter((t) => !gone.has(t.tid));
     this.changed = true;
     return {};
+  }
+
+  /** Remove trash entries for good: all of them, or the given ids. */
+  emptyTrash(tids) {
+    if (tids === undefined) {
+      const removed = this.trash.length;
+      if (removed) { this.trash = []; this.changed = true; }
+      return { removed };
+    }
+    const gone = new Set(tids);
+    for (const tid of gone) if (!this.trash.some((t) => t.tid === tid)) fail('NOT_FOUND', 'Not in the trash.');
+    this.trash = this.trash.filter((t) => !gone.has(t.tid));
+    if (gone.size) this.changed = true;
+    return { removed: gone.size };
+  }
+
+  /** Remove trash entries deleted before `before` (store clock, never file times). */
+  purgeTrash(before) {
+    const keep = this.trash.filter((t) => t.deletedAt >= before);
+    const removed = this.trash.length - keep.length;
+    if (removed) { this.trash = keep; this.changed = true; }
+    return { removed };
+  }
+
+  /**
+   * Point moved pieces at their new place (compaction). map: "pack:offset:length" -> [pack, offset, length].
+   * @param {Map<string, [string, number, number]>} map
+   */
+  remap(map) {
+    const move = (e) => {
+      if (e.kind !== 'f' || !e.x?.some(([n, o, l]) => map.has(`${n}:${o}:${l}`))) return e;
+      this.changed = true;
+      return { ...e, x: e.x.map(([n, o, l]) => map.get(`${n}:${o}:${l}`) || [n, o, l]) };
+    };
+    for (const [p, e] of this.files) this.files.set(p, move(e));
+    this.trash = this.trash.map(move);
   }
 }

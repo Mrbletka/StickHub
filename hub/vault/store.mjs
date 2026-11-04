@@ -3,21 +3,21 @@
 // - Writes go through one queue. Writes that arrive together share one commit: new pack(s) under random names
 //   (fsync), then a new index (seq + 1) as .part, fsync, rename. A .vx file is never changed in place.
 // - A failed write marks the store broken: only a fresh open shows what is on disk.
-// - Cleanup runs in the queue (cleanup.mjs): full when nothing is damaged, light (index files only) when something is.
-//   At 200 files in _index new commits are refused (NEEDS_REPAIR); reads keep working.
-// No logging. Errors are VaultErrors whose messages never contain a path or a name from the vault.
+// - Cleanup (cleanup.mjs: full, or light when something is damaged), compaction and maintain() (compact.mjs) run in
+//   the queue. At 200 files in _index commits are refused (NEEDS_REPAIR). No logging; errors never name a vault path.
 
 import { createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { VaultError, fail, ioError as failedWrite } from './errors.mjs';
+import { fail, ioError as failedWrite } from './errors.mjs';
 import { zero } from './bytes.mjs';
 import { subkeys } from './keys.mjs';
 import { parseHeader, verifyHeaderMac } from './header.mjs';
-import { buildPacks } from './packs.mjs';
+import { prepareCommit } from './packs.mjs';
+import { compactStore, maintainStore, TRASH_DAYS_MS } from './compact.mjs';
 import { PackReader, readRange, readChunks } from './store-read.mjs';
 import { verifyReplica } from './verify.mjs';
-import { encodeIndex, decodeIndex, usage, INDEX_LIMITS } from './indexfile.mjs';
-import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createReplica, PACK_DIR } from './replica.mjs';
+import { INDEX_LIMITS } from './indexfile.mjs';
+import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createVault, PACK_DIR } from './replica.mjs';
 import { runCleanup } from './cleanup.mjs';
 import { createVfs } from './vfs.mjs';
 import { Draft, checkPath } from './store-ops.mjs';
@@ -28,7 +28,7 @@ export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexByte
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #q = []; #running = null; #reads = 0;
-  #packs; #opts; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0;
+  #packs; #opts; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0; #maintained = false; #dirty = false;
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -36,15 +36,7 @@ export class Store {
    * @param {{headerText: string, dk: Buffer, guard?: Function, random?: Function, now?: () => number}} o
    */
   static async create(dir, o) {
-    const header = parseHeader(o.headerText);
-    verifyHeaderMac(header, o.dk);
-    const keys = subkeys(o.dk, header.vaultId, header.epoch);
-    try {
-      await createReplica(dir, { headerText: o.headerText, ctx: { kFile: keys.file, vaultId: header.vaultId, epoch: header.epoch },
-        vfs: createVfs({ guard: o.guard }), random: o.random, now: o.now });
-    } finally {
-      zero(keys.header, keys.contentId, keys.file);
-    }
+    const header = await createVault(dir, o);
     return Store.open(dir, { ...o, header, headerInfo: { used: 'main', problem: null, backupBehind: false } });
   }
 
@@ -81,6 +73,7 @@ export class Store {
       s.#indexFiles = scan.count;
       // leftovers count toward the next cleanup: a folder near the limit gets one soon after the first commit
       s.#sinceCleanup = Math.max(0, scan.valid.length - 2) + scan.parts.length;
+      s.#dirty = s.#headerInfo.backupBehind;
       if (s.#headerInfo.problem) s.#problems.push(s.#headerInfo.problem);
     } catch (e) {
       s.#wipe();
@@ -221,14 +214,34 @@ export class Store {
     return this.#op((d, now) => d.restore(tids, o.to, now));
   }
 
-  /** Remove leftovers (see the note at the top). @returns {Promise<{done: boolean, reasons?: string[], removed?: object}>} */
+  /** Remove trash entries for good: all, or the given ids. */
+  emptyTrash(tids) {
+    if (tids !== undefined && (!Array.isArray(tids) || tids.length > 1000 || !tids.every((t) => typeof t === 'string'))) fail('BAD_INPUT', 'Give up to 1000 trash ids.');
+    return this.#op((d) => d.emptyTrash(tids));
+  }
+
+  /** Remove trash entries older than 30 days (store clock). */
+  purgeTrash() { return this.#op((d, now) => d.purgeTrash(now - TRASH_DAYS_MS)); }
+
+  /** Remove leftovers (cleanup.mjs: full or light). */
   cleanup() { return this.#task(() => this.#cleanup()); }
 
-  /** After every `autoCleanupEvery` commits, queue a cleanup; its result (or error code) goes to status().lastCleanup. */
-  #maybeAutoCleanup() {
-    if (!this.#autoEvery || ++this.#sinceCleanup < this.#autoEvery) return;
+  /**
+   * Move the live pieces of small or mostly dead packs into new ~8 MiB packs: one commit (compact.mjs). Not while there
+   * are problems. Stops between files when the signal is aborted (nothing written then).
+   * @param {{maxBytes?: number, signal?: AbortSignal}} [o]
+   */
+  compact(o = {}) { return this.#task(() => this.#compact(o)); }
+
+  /** Purge old trash, compact if worth it, then clean up. Nothing to do = no I/O. */
+  maintain() { return this.#task(() => this.#maintain()); }
+
+  /** After the first commit of a session and then every `autoCleanupEvery` commits, queue maintain(). */
+  #maybeMaintain() {
+    if (!this.#autoEvery || (this.#maintained && ++this.#sinceCleanup < this.#autoEvery)) return;
+    this.#maintained = true;
     this.#sinceCleanup = 0;
-    this.#q.push({ kind: 'task', fn: () => this.#cleanup(), resolve: () => {}, reject: (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; } });
+    this.#q.push({ kind: 'task', fn: () => this.#maintain(), resolve: () => {}, reject: (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; } });
   }
 
   /** Replace the header (both copies). It must be for this vault and epoch, with a higher hseq and a valid MAC. */
@@ -308,11 +321,6 @@ export class Store {
       for (const it of batch) it.reject(e);
       return;
     }
-    if (this.#indexFiles >= this.#limits.indexFiles) {
-      const err = new VaultError('NEEDS_REPAIR', 'The vault cannot save any more: a damaged file stops the cleanup. Run "vault verify", then "vault export" to save your notes.');
-      for (const it of batch) it.reject(err);
-      return;
-    }
     const d = new Draft(this.#state);
     const now = this.#now();
     const ok = [];
@@ -320,14 +328,22 @@ export class Store {
       try { ok.push([it, it.fn(d, now)]); } catch (e) { it.reject(e); }
     }
     if (!ok.length) return;
-    if (!d.changed) { for (const [it, r] of ok) it.resolve(r); return; }
-    let prep;
     try {
-      prep = this.#prepare(d, now);
+      if (d.changed) await this.#commitDraft(d, now);
     } catch (e) {
       for (const [it] of ok) it.reject(e);
       return;
     }
+    for (const [it, r] of ok) it.resolve(r);
+    if (d.changed) this.#maybeMaintain();
+  }
+
+  /** Commit a changed draft: packs (random names, fsync), then the index (.part, fsync, rename). Throws on failure. */
+  async #commitDraft(d, now) {
+    if (this.#indexFiles >= this.#limits.indexFiles) {
+      fail('NEEDS_REPAIR', 'The vault cannot save any more: a damaged file stops the cleanup. Run "vault verify", then "vault export" to save your notes.');
+    }
+    const prep = prepareCommit(this.#state, d, { ctx: this.#ctx, limits: this.#limits, random: this.#random, now });
     let name;
     try {
       for (const p of prep.packs) await this.#vfs.writeNew(join(this.#dir, PACK_DIR, `${p.name}.vx`), p.file);
@@ -335,40 +351,30 @@ export class Store {
       name = await writeIndexPayload(this.#dir, prep.payload, this.#ctx, this.#vfs, this.#random);
     } catch (e) {
       this.#broken = true;
-      const err = failedWrite(e);
-      for (const [it] of ok) it.reject(err);
-      return;
+      throw failedWrite(e);
     }
     this.#current = { name, seq: prep.next.seq };
     this.#indexFiles++;
     this.#state = prep.next;
-    for (const [it, r] of ok) it.resolve(r);
-    this.#maybeAutoCleanup();
   }
 
-  /** Build the packs for the new blobs, fill in the extents, encode the next index. No I/O. */
-  #prepare(d, now) {
-    const { packs, ext, sizes } = buildPacks(d.newBlobs, this.#ctx, this.#random, now);
-    const packSizes = new Map([...this.#state.packSizes, ...sizes]);
-    const fill = (e) => (e.kind === 'f' && e.x === null ? { ...e, x: ext.get(e.id) } : e);
-    const files = new Map([...d.files].map(([p, e]) => [p, fill(e)]));
-    const trash = d.trash.map(fill);
-    const used = usage(files, trash);
-    if (used.size > this.#limits.packs) fail('TOO_MANY_PACKS', 'The vault has too many packs. Compact it first.');
-    for (const n of [...packSizes.keys()]) if (!used.has(n)) packSizes.delete(n);
-    const next = { ...this.#state, seq: this.#state.seq + 1, time: now, files, trash, packSizes };
-    const payload = encodeIndex(next, this.#ctx);
-    if (payload.length > this.#limits.indexBytes) fail('TOO_BIG', 'The vault index would be bigger than 16 MiB.');
-    let back = null; // never write an index this code cannot read back
-    try { back = decodeIndex(payload, this.#ctx); } catch { back = null; }
-    if (!back || back.seq !== next.seq || back.files.size !== files.size || back.trash.length !== trash.length) {
-      fail('INTERNAL', 'The vault index could not be built (a bug). Nothing was saved.');
-    }
-    return { next, packs, payload };
+  /** What compaction and maintenance need from the store (compact.mjs). */
+  #inner(o = {}) {
+    return { state: this.#state, problems: this.#problems, pr: this.#packs, kId: this.#keys.contentId, ctx: this.#ctx,
+      random: this.#random, now: this.#now(), signal: o.signal, maxBytes: o.maxBytes, commit: (d, now) => this.#commitDraft(d, now) };
+  }
+
+  #compact(o) { return compactStore(this.#inner(o)); }
+
+  async #maintain() {
+    const needsCleanup = () => this.#indexFiles > 2 || this.#dirty;
+    const out = await maintainStore(this.#inner(), () => this.#inner(), needsCleanup, () => this.#cleanup());
+    if (out.cleanup) this.#dirty = false;
+    return out;
   }
 
   async #cleanup() {
-    if (this.#reads) return { done: false, reasons: ['reads in progress'] };
+    if (this.#reads) return { done: false, level: 'none', reasons: ['reads in progress'] };
     const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
     this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons };
     this.#indexFiles = r.indexFiles;

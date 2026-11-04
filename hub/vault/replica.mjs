@@ -7,11 +7,12 @@
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { VaultError, fail } from './errors.mjs';
-import { toB64u } from './bytes.mjs';
+import { toB64u, zero } from './bytes.mjs';
 import { parseHeader, verifyHeaderMac, HEADER_MAX_BYTES } from './header.mjs';
 import { openVx, sealVx, vxSize, newFileId, vxFileName, parseVxFileName, MAX_PAYLOAD } from './vx.mjs';
 import { decodeIndex, encodeIndex } from './indexfile.mjs';
-import { ID_BYTES } from './keys.mjs';
+import { ID_BYTES, subkeys } from './keys.mjs';
+import { createVfs } from './vfs.mjs';
 
 export const INDEX_DIR = '_index';
 export const PACK_DIR = '_packs';
@@ -175,4 +176,23 @@ export async function createReplica(dir, o) {
   const state = { seq: 1, replica: toB64u(random(ID_BYTES)), time: (o.now || Date.now)(), files: new Map(), trash: [], packSizes: new Map(), peers: {}, devices: {} };
   await writeIndexPayload(dir, encodeIndex(state, o.ctx), o.ctx, vfs, random);
   await writeHeaderFiles(dir, o.headerText, vfs);
+}
+
+/**
+ * Create a new, empty vault in dir from a header text and its data key (Store.create opens it afterwards).
+ * @param {string} dir
+ * @param {{headerText: string, dk: Buffer, guard?: Function, random?: Function, now?: () => number}} o
+ * @returns {Promise<object>} the parsed, checked header
+ */
+export async function createVault(dir, o) {
+  const header = parseHeader(o.headerText);
+  verifyHeaderMac(header, o.dk);
+  const keys = subkeys(o.dk, header.vaultId, header.epoch);
+  try {
+    await createReplica(dir, { headerText: o.headerText, ctx: { kFile: keys.file, vaultId: header.vaultId, epoch: header.epoch },
+      vfs: createVfs({ guard: o.guard }), random: o.random, now: o.now });
+  } finally {
+    zero(keys.header, keys.contentId, keys.file);
+  }
+  return header;
 }
