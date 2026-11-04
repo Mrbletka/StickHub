@@ -206,6 +206,17 @@ Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` 
 - App #1 Notebook (apps/notebook): notes as plain files in HUB_DATA_DIR/vault, VS Code-style Explorer. See its README.
   **Done: 09c5942** (tested on the phone 2026-11-04). Later: full-text search, tags, pins, [[wiki links]], conflict compare view.
 
+Encrypted vault: docs/VAULT-DESIGN.md (reviewed; decisions in its section 0, build order in section 11).
+v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build one step at a time and stop after each.
+- v1 step 1, crypto building blocks in hub/vault/ (KDFs, slots, paper code, generated passphrases, header, .vx files):
+  **Done: pending** (tests only; nothing is wired into the hub yet). Next: v1 step 2 (store, `vault export`, `vault verify`).
+- Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,
+  passphrases or paper codes; a VaultError message never contains an input value (test/vault-nosecrets.test.mjs).
+  zero() keys when done. KDF settings and everything else read from a stick are checked before any KDF runs.
+- test/fixtures/vault-v1/ is a format fixture with TEST ONLY keys: never edit it; later versions must keep reading it.
+  `node --test` runs every .mjs file under test/, so fixture writers live inside their test behind an env var
+  (STICKHUB_WRITE_FIXTURE=1), never as a separate script there.
+
 ## Delivery
 - Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
 - Record the end of each phase under "Build order" with its commit hash. No git tags.

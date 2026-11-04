@@ -1,0 +1,25 @@
+{
+  "warning": "TEST ONLY. Every key and secret in this folder is public test data, made from a fixed seed. Never use it for real data.",
+  "seed": "StickHub vault v1 fixture - TEST ONLY",
+  "dataKeyHex": "e6454b3008568136b033aae6d862428360a8ac00a9e55da679d604973192dd8b",
+  "vaultId": "XMqnGOIB07-3wb7DWdztZw",
+  "epoch": 1,
+  "passphrase": "TEST ONLY fixture passphrase - not a real secret",
+  "paperCode": "G59N-9QH9-P7DT-74S1-9S8Q-JHH9-7X5A",
+  "kdf": {
+    "alg": "argon2id",
+    "m": 1024,
+    "t": 1,
+    "p": 1
+  },
+  "index": {
+    "file": "fd7bmsigrk6pf642he45uba63y.vx",
+    "payloadBytes": 57,
+    "payloadSha256": "9f38ae7ecf047dcb70ebec93e562551df5a166f4ee7a815b3afe375517b8126b"
+  },
+  "pack": {
+    "file": "wvw7k5qlqm25f5puyixbntqitq.vx",
+    "payloadBytes": 150000,
+    "payloadSha256": "e6e48f4c1946f03d8e801ea89a90c95372623cd1df4140a65e39e341ba64fa4b"
+  }
+}

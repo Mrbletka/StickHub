@@ -94,6 +94,7 @@ hub/sync/             scan, plan, run (journal, resume, cancel), hub service, sa
 hub/platform/         adapters: volumes (mountinfo), Termux actions, git
 hub/watcher.mjs       opens the hub when the stick is plugged in
 hub/auth.mjs          token and one-time login codes
+hub/vault/            encrypted vault crypto (v1 step 1, not wired in yet; see docs/VAULT-DESIGN.md)
 hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
 hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
 hub/ui/               the web UI (vanilla)
@@ -121,3 +122,9 @@ Every call needs the header `X-Hub-Token`, except `GET /api/ping`, `POST /api/au
 | POST | /api/sync?what=all\|data\|code | start a sync in the background |
 | POST | /api/sync/cancel | cancel the running sync |
 | GET | /api/events[?logs=:id] | SSE: `apps`, `app`, `status`, `log` |
+
+## Credits
+- `hub/vault/wordlist-eff-large.txt`: the **EFF Large Wordlist for Passphrases** by the
+  **Electronic Frontier Foundation**, https://www.eff.org/dice, licensed under **CC BY 3.0 US**,
+  https://creativecommons.org/licenses/by/3.0/us/. Changed: the dice numbers were removed and a credit header was
+  added; the words and their order are unchanged.

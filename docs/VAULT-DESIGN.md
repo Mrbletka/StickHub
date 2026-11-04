@@ -99,7 +99,7 @@ Not visible: file names, folders, how many files each app has, single file sizes
 | Encrypt and authenticate | AES-256-GCM, 96-bit nonce, 128-bit tag | `createCipheriv('aes-256-gcm')` | 206 MB/s on the phone **(p9)**, 10x the stick. ChaCha20-Poly1305 is a bit faster there (271 MB/s), but AES-GCM is also in WebCrypto and crypto is not the bottleneck |
 | Long files | STREAM (Hoang et al. 2015), as in `age`: 64 KiB segments, nonce = 11-byte segment number + 1-byte "last" flag | AES-256-GCM per segment | per-file key, so nonces never repeat |
 | Content ids, header MAC | HMAC-SHA256 | `createHmac` | keys derived from the data key |
-| Hide sizes | Padmé padding (Nikitin et al., PETS 2019), at most 12% extra | - | minimum 64 KiB per file |
+| Hide sizes | Padmé padding (Nikitin et al., PETS 2019): at most 12% extra in general, at most about 3% for the sizes used here (64 KiB and up) | - | minimum 64 KiB per file |
 | Randomness | OS random | `crypto.randomBytes` | - |
 | Device key | RSA-2048, PKCS#1 v1.5 signature with SHA-256 (deterministic) | `termux-keystore sign`: 256 raw bytes, 1.1-1.3 s per call **(p9)** | key inside secure hardware, never leaves the phone |
 
@@ -136,8 +136,8 @@ DK (32 random bytes, one per epoch)
   p <= 8; scrypt N <= 2^20. Anything else is refused (a tampered stick must not make the phone run out of memory).
 - This slot is what a stick finder attacks offline. Argon2id makes each guess slow and memory-heavy (256 MiB per
   guess, on any hardware), but a short or common passphrase still falls. So (decision 5):
-  - By default the hub **generates** the passphrase: 5 words picked with `crypto.randomInt` from the EFF large word
-    list (7776 words, about 64.6 bits). The list ships as `hub/vault/wordlist-eff-large.txt` with the words only (the
+  - By default the hub **generates** the passphrase: 5 words from the EFF large word list (7776 words, about
+    64.6 bits), picked by rejection sampling on 16-bit random values (uniform, no modulo bias), joined by spaces. The list ships as `hub/vault/wordlist-eff-large.txt` with the words only (the
     dice numbers removed); it is licensed CC BY 3.0 US, so the file header and the README credit the Electronic
     Frontier Foundation, link the source and the license, and say what was changed.
   - An own passphrase is accepted only with 20 or more characters (counted after NFKC).
@@ -265,7 +265,7 @@ without a vault. An old hub looks only for `stick.json`, so it finds nothing: no
 ~~~
 Slots inside `body` (binary values in base64url):
 ~~~
-{ "id": <16 B>, "type": "passphrase", "kdf": { "alg": "argon2id", "m": 65536, "t": 3, "p": 4, "salt": <16 B> }, "nonce": <12 B>, "wrapped": <48 B> }
+{ "id": <16 B>, "type": "passphrase", "kdf": { "alg": "argon2id", "m": 262144, "t": 3, "p": 4, "salt": <16 B> }, "nonce": <12 B>, "wrapped": <48 B> }
 { "id": <16 B>, "type": "device", "sign": "SHA256withRSA", "challenge": <32 B>, "salt": <32 B>, "nonce": ..., "wrapped": ... }
 { "id": <16 B>, "type": "recovery", "salt": <32 B>, "nonce": ..., "wrapped": ... }
 ~~~
@@ -284,8 +284,9 @@ Slots inside `body` (binary values in base64url):
 8-byte plain header: "SHVX" | version 1 | kind ('P' pack, 'I' index) | 0 0
 then segments: AES-256-GCM(file key, nonce = segment number (11 bytes) + last flag (1 byte),
                            64 KiB of plaintext (the last one shorter), AAD = the 8-byte header) + 16-byte tag
-file key = HKDF-SHA256(K_file, salt = file id (from the file name), info = kind + vault id + epoch)
-plaintext of all segments = length (4 bytes) + payload + zero padding up to Padmé(size), at least 64 KiB
+file key = HKDF-SHA256(K_file, salt = file id (from the file name),
+                       info = "StickHub vault v1 file" 0x00 | kind letter | vault id | epoch (4 bytes))
+plaintext of all segments = length (4 bytes) + payload + zero padding up to max(64 KiB, Padmé(4 + length))
 ~~~
 - The key comes from the name, so renaming or swapping files makes them fail to decrypt. A cut-short file fails
   (no segment marked "last"); extra bytes after the last segment are refused.
@@ -611,6 +612,46 @@ the refusal), and one that prints nothing and exits 0 (what `termux-keystore sig
 6. Migration (plain backup tar first, verify, then remove plain copies), change passphrase, new paper code, rekey on
    request, START-HERE.txt and `cli.mjs setup` for a new phone (passphrase). Probe 10, v1 part, on the phone.
 
+### v1 step 1: built (commit: see AGENT-GUIDE.md, Build order)
+Crypto building blocks in `hub/vault/` (overview in `hub/vault/README.md`). Tests only: nothing is wired into the hub.
+KDFs (Argon2id 256 MiB t=3 p=4, scrypt fallback, limits checked before running, HKDF, NFKC), passphrase and recovery
+slots, paper code, generated passphrases (EFF list, credited), header build / strict parse / MAC / unlock, `.vx`
+files on buffers and streams, `zero()`. 60 new tests, including the RFC known answers, a fixture vault
+(`test/fixtures/vault-v1/`, TEST ONLY) and a recording test that finds no secret in any output or error.
+
+Exact encodings (the design left them open; the fixture now freezes them):
+- Binary values in JSON: base64url without padding, canonical only (one spelling per value). `.vx` file names: RFC 4648
+  base32, lower case, 26 characters, canonical only.
+- Subkeys: `HKDF-SHA256(DK, salt = vault id | epoch (4 bytes), info = "StickHub vault v1 header" / "... content-id" /
+  "... file")`.
+- Slot AAD: `"StickHub vault v1 slot" 0x00 | vault id | epoch (4 bytes) | slot id | the slot without id, nonce and
+  wrapped as JSON with a fixed key order`. `wrapped` = AES-GCM ciphertext (32 bytes) | tag (16 bytes).
+- Passphrase key: Argon2id(NFKC passphrase, salt, associated data = vault id | slot id), 32 bytes; scrypt the same
+  without associated data. Recovery key: `HKDF-SHA256(ikm = the 26 canonical characters as ASCII, salt,
+  info = "StickHub vault v1 recovery" 0x00 | vault id | slot id)`.
+- `.vx` file key and padding: section 6.3 (now exact).
+- `vault.json`: compact JSON `{"stickhubVault":1,"body":"...","mac":"..."}` plus a newline; MAC =
+  HMAC-SHA256(K_header, body as UTF-8).
+
+Deviations and choices, with the reason:
+1. scrypt limits: besides N <= 2^20 also r <= 32, p <= 4 and memory (128 x N x r) <= 1 GiB, so a tampered stick cannot
+   make scrypt huge through r or p either.
+2. Argon2id's lower limit is its own minimum (m >= 8 x p KiB). No minimum strength is enforced: on reading, weaker
+   settings only give a different key; on making a slot, the hub always uses the default (tests pass tiny settings).
+3. Generated passphrases are joined by spaces, not hyphens: 4 EFF words contain a hyphen (drop-down, felt-tip,
+   t-shirt, yo-yo). One can be as short as 19 characters (5 x 3 + 4); the 20-character rule is for own passphrases.
+4. Words are picked by explicit rejection sampling (as the review asked) instead of `crypto.randomInt`; both are
+   uniform.
+5. A v1 hub parses device slots (schema of 6.2) without opening them, so it can still read a v2 header and open it
+   with the passphrase or the paper code.
+6. A header or `.vx` file of a newer format version gives `UNSUPPORTED` ("update this hub"), not "damaged".
+7. A sealing stream needs the payload size up front (it is in segment 0). The data API knows the size of every write;
+   a write without a known size must be spooled first (step 3).
+8. Opening streams hand out payload bytes as each 64 KiB segment is authenticated; the end of the file is checked at
+   the end. A user of the stream must throw the result away if the stream errors.
+9. Left for later steps: reading a byte range of a `.vx` file, the header fallbacks (`vault.bak.json`, the phone's
+   copy), the rate limit, everything about the device slot.
+
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then bring the page back),
    pattern hint on the lock screen, devices page, remove a device (rekey), `vault lock --hard` and the **StickHub
@@ -622,3 +663,6 @@ All twelve review questions are decided (section 0). Left for later measurement,
    the stick.
 2. Probe 10 (v2): what is in front after the fingerprint box; try the sign before or together with opening the page.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
+4. Found in step 1: NFKC does not trim. A keyboard that adds a trailing space (or a double space between words) makes
+   the passphrase wrong. Trim and collapse spaces before the KDF? Must be decided before the first real vault, since
+   it changes the key.
