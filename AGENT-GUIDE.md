@@ -225,7 +225,7 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - Job 3a, v1 step 3 part 1: a failed compaction step still cleans up (5918283); the data API server in hub/dataapi/
   (see its README: wire format, limits, errors) and the client hub/appkit/hubfs.mjs (one file, node: only, socket
   or plain-file mode), contract suite for both modes and hostile tests. NOT wired into the hub: the hub behaves as
-  before. Probe 11 (data API latency on the phone) still to do. Next: 3b procman starts apps with HUB_DATA_SOCKET +
+  before. Probe 11 (probes/p11-dataapi.mjs): data API latency on the phone and the stick. Next: 3b procman starts apps with HUB_DATA_SOCKET +
   HUB_DATA_TOKEN (scaffold copies hubfs into new apps); 3c the Notebook and sample apps use hubfs; job 4 lock screen.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
