@@ -287,3 +287,20 @@ What it means:
   only 181 files, because one big maintain() keeps the old packs that the index before its compaction commit still
   uses; stepped compaction makes several commits, so more old packs can go in the same call. The same 238 files in
   one big run would take about 13 s. The steps cost about 12 ms per deleted file more (run 11: about 37 ms).
+
+## Run 13 - 2026-11-04: probe 11, the data API (code a58d624, job 3a)
+**No stick was plugged in** (probe 0: no volume mounts), so the "stick" column ran on the phone's shared storage
+(`/storage/emulated/0/...`), not on the exFAT stick. A stick run is still to do.
+| Step | Phone (Termux tmp) | Phone shared storage ("stick" label) |
+|---|---|---|
+| socket path length / modes | 57 bytes (limit 107); run dir 700, socket 600 | same socket |
+| 100 small writes (2 KB) through hubfs | p50 58 ms, p95 140 ms, max 151 ms | p50 50 ms, p95 140 ms, max 156 ms |
+| 200 small reads through hubfs | p50 4.7 ms, p95 11.3 ms, max 27 ms | p50 7.5 ms, p95 9.8 ms, max 33 ms |
+| 5 MB write / read | 109 / 129 ms | 140 / 202 ms |
+| write -> its event | 37 ms | 48 ms |
+| wrong token | 401 | 401 |
+| full verify | OK | OK |
+
+What it means: the socket and token layer adds little. A small read is about 5-8 ms; a small write about 50-60 ms
+(a commit on the phone, run 12: about 40 ms; the p95 of 140 ms is the automatic maintenance steps). Events arrive
+within about 40-50 ms. Mode bits are as designed.
