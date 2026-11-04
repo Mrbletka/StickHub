@@ -13,7 +13,8 @@ import { StickService } from './sync/service.mjs';
 import { loadToken, LoginCodes } from './auth.mjs';
 import { stickhubHome, loadSettings } from './config.mjs';
 import { listVolumes } from './platform/termux.mjs';
-import { findStick } from './stick.mjs';
+import { findStick, RUNNING_MARK } from './stick.mjs';
+import { writeFile, rename, rm, stat, realpath } from 'node:fs/promises';
 import { PidFile, cleanupLeftovers } from './proc.mjs';
 
 export const HUB_PORT = 8787;
@@ -25,7 +26,9 @@ const ROOT = dirname(HUB_DIR);
  * @param {{root?: string, appsDir?: string, dataDir?: string, port?: number,
  *   portRange?: {from: number, to: number}, startTimeoutMs?: number,
  *   stick?: {listVolumes?: Function, pollMs?: number, autoSync?: boolean, device?: string, git?: object},
- *   home?: string, shutdown?: () => void}} [opts]
+ *   home?: string, shutdown?: () => void,
+ *   stickMode?: {mount: string, listVolumes?: Function, pollMs?: number, onRemoved?: () => void}}} [opts]
+ *   stickMode: the hub runs from <mount>/HUB (code, apps and data on the stick); it stops when the stick goes
  *   stick: options for the stick service (tests pass fakes); home: private folder (token, app PIDs)
  */
 export async function createHub(opts = {}) {
@@ -44,9 +47,35 @@ export async function createHub(opts = {}) {
   });
   await procman.reload();
   const commit = await codeCommit(root).catch(() => null);
-  const stick = new StickService({ root, procman, ...opts.stick });
-  const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status() });
-  const api = createApi({ procman, stick, status, token, codes, shutdown: () => opts.shutdown?.() });
+  const sm = opts.stickMode || null;
+  if (sm) {
+    // Stick mode only runs from inside that stick's HUB folder.
+    const [r, m] = await Promise.all([realpath(root), realpath(sm.mount)]);
+    if (!r.startsWith(m + '/')) throw new Error(`Stick mode: ${root} is not on the stick ${sm.mount}`);
+  }
+  const stick = new StickService({ root, procman, ...opts.stick, ...(sm ? { autoSync: false } : {}) });
+  let removed = false;
+  const mode = { mode: sm ? 'stick' : 'phone', mount: sm?.mount || null };
+  const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status(), mode: mode.mode, removed });
+  const api = createApi({ procman, stick, status, token, codes, mode, shutdown: () => opts.shutdown?.() });
+
+  // Stick mode: check every 0.5 s that the stick is still there. When it goes, stop the apps (short grace,
+  // so all is stopped within 2 s), tell the page ("Stick removed"), then the hub stops: its own code is on the stick.
+  let watch = null;
+  const stickGone = async () => {
+    const { volumes } = await (sm.listVolumes || listVolumes)();
+    if (!volumes.some((v) => v.mountPoint === sm.mount)) return true;
+    try { await stat(join(root, 'stick.json')); return false; } catch { return true; }
+  };
+  const onRemoved = async () => {
+    const t0 = Date.now();
+    removed = true;
+    api.broadcastStatus();
+    await procman.stopAll(1200);
+    console.log(`stick removed: apps stopped in ${Date.now() - t0} ms`);
+    api.broadcastStatus();
+    sm.onRemoved?.();
+  };
   const uiDir = join(HUB_DIR, 'ui');
 
   const server = createServer(async (req, res) => {
@@ -74,19 +103,33 @@ export async function createHub(opts = {}) {
   });
 
   return {
-    server, procman, stick, token, codes, home,
+    server, procman, stick, token, codes, home, mode,
+    /** True once the stick was pulled out in stick mode. */
+    get removed() { return removed; },
     /** Start listening, then start watching for the stick. Rejects with EADDRINUSE when the port is taken. */
     listen: () => new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(port, '127.0.0.1', () => {
+      server.listen(port, '127.0.0.1', async () => {
         server.off('error', reject);
         stick.start().catch((e) => console.error(`stick: ${e.message}`));
+        if (sm) {
+          // The marker says "running from this stick"; a clean stop removes it, a pull leaves it for the next start.
+          const mark = join(root, RUNNING_MARK);
+          await writeFile(`${mark}.part`, JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+          await rename(`${mark}.part`, mark);
+          watch = setInterval(async () => {
+            if (removed) return;
+            if (await stickGone().catch(() => true)) { clearInterval(watch); onRemoved(); }
+          }, sm.pollMs ?? 500);
+        }
         resolve(`http://127.0.0.1:${server.address().port}/`);
       });
     }),
     /** Stop syncing, all apps and the server. */
     async close() {
+      clearInterval(watch);
       await stick.stop();
+      if (sm && !removed) await rm(join(root, RUNNING_MARK), { force: true }).catch((e) => console.error(`marker: ${e.message}`));
       await procman.stopAll();
       api.close();
       server.closeAllConnections();
@@ -96,8 +139,10 @@ export async function createHub(opts = {}) {
 }
 
 async function main() {
+  // Stick mode is started by hub/stickmode.mjs (node hub/cli.mjs open --from-stick, or the watcher with runFromStick).
+  const stickMount = process.env.STICKHUB_MODE === 'stick' ? process.env.STICKHUB_STICK_MOUNT : null;
   // Cartridge feel: with requireStick, no stick = no hub.
-  if ((await loadSettings()).requireStick) {
+  if (!stickMount && (await loadSettings()).requireStick) {
     const s = await findStick((await listVolumes()).volumes);
     if (s.state !== 'ok') {
       console.error('requireStick is on (~/.stickhub/settings.json) and no stick with HUB is plugged in. Plug it in and try again.');
@@ -105,7 +150,11 @@ async function main() {
     }
   }
   let shutdown = () => {};
-  const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0) });
+  const hub = await createHub({
+    port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0),
+    // Stick pulled out: the apps are already stopped; give open pages a moment to show "Stick removed", then stop.
+    stickMode: stickMount ? { mount: stickMount, onRemoved: () => setTimeout(() => shutdown(0), 300) } : null,
+  });
   for (const e of hub.procman.list()) if (e.problems.length) console.warn(`app ${e.id}: ${e.problems.join('; ')}`);
   let url;
   try {
@@ -117,7 +166,7 @@ async function main() {
     }
     throw e;
   }
-  console.log(`StickHub running: ${url}  (${hub.procman.list().length} apps, Ctrl+C to stop)`);
+  console.log(`StickHub running: ${url}  (${hub.procman.list().length} apps${stickMount ? `, from the stick ${stickMount}` : ''}, Ctrl+C to stop)`);
 
   let closing = false;
   shutdown = async (code = 0) => {

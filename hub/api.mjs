@@ -55,7 +55,9 @@ export function createApi(hub) {
     if (m && !procman.apps.has(m[1])) return json(res, 404, { error: `No app "${m[1]}"` });
 
     // Open routes.
-    if (req.method === 'GET' && path === '/api/ping') return json(res, 200, { name: 'StickHub', pid: process.pid, lastLoginAt });
+    if (req.method === 'GET' && path === '/api/ping') {
+      return json(res, 200, { name: 'StickHub', pid: process.pid, lastLoginAt, mode: hub.mode?.mode || 'phone', mount: hub.mode?.mount || null });
+    }
     if (req.method === 'POST' && path === '/api/auth/exchange') {
       const body = await readJson(req).catch(() => null);
       if (!body || !hub.codes.consume(body.code)) {
@@ -111,6 +113,8 @@ export function createApi(hub) {
 
   return {
     handle,
+    /** Push the hub status to every open page now. */
+    broadcastStatus: () => broadcast('status', hub.status()),
     close() {
       for (const c of clients) c.res.end();
       clients.clear();

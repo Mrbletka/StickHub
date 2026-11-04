@@ -8,6 +8,8 @@ import { ID_RE } from './manifest.mjs';
 import { createFsx } from './sync/fsx.mjs';
 
 export const HUB = 'HUB';
+/** HUB/.running.json: written while the hub runs from the stick; still there at the next plug-in = it was pulled out. */
+export const RUNNING_MARK = '.running.json';
 const MAX_STICK_JSON = 64 * 1024;
 const MAX_LOCK = 4 * 1024;
 export const LOCK_STALE_MS = 5 * 60_000;

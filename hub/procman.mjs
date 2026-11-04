@@ -128,14 +128,14 @@ export class ProcessManager extends EventEmitter {
     });
   }
 
-  /** Stop an app (no-op if it is not running). */
-  stop(id) {
+  /** Stop an app (no-op if it is not running). graceMs: time after SIGTERM before SIGKILL (default 3 s). */
+  stop(id, graceMs) {
     return this.#queue(id, async () => {
       const s = this.state.get(id);
       if (!s || s.status !== 'running') return this.view(id);
       this.#set(id, { status: 'stopping' });
       try {
-        await s.handle.stop();
+        await s.handle.stop(graceMs);
         await this.pidFile?.remove(id);
         this.#log(id, 'sys', 'stopped');
         this.#set(id, { status: 'stopped', port: null, url: null, startedAt: null, handle: null, error: null });
@@ -155,8 +155,8 @@ export class ProcessManager extends EventEmitter {
   }
 
   /** Stop every app (used on hub exit). Errors are logged, never thrown. */
-  async stopAll() {
-    await Promise.all([...this.state.keys()].map((id) => this.stop(id).catch(() => {})));
+  async stopAll(graceMs) {
+    await Promise.all([...this.state.keys()].map((id) => this.stop(id, graceMs).catch(() => {})));
   }
 
   /** Last resort on process exit: kill child processes synchronously. */

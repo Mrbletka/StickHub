@@ -46,10 +46,11 @@ export default {
       createInterface({ input: stream, crlfDelay: Infinity }).on('line', (line) => ctx.log(name, line));
     }
 
-    const stop = async () => {
+    // graceMs: how long the app gets after SIGTERM (stick removed: short, so everything stops within 2 s).
+    const stop = async (graceMs = STOP_GRACE_MS) => {
       if (exited) return exit;
       child.kill('SIGTERM');
-      const timer = setTimeout(() => { if (!exited) { ctx.log('sys', 'did not stop in 3 s, killing'); child.kill('SIGKILL'); } }, STOP_GRACE_MS);
+      const timer = setTimeout(() => { if (!exited) { ctx.log('sys', `did not stop in ${graceMs / 1000} s, killing`); child.kill('SIGKILL'); } }, graceMs);
       const result = await exit;
       clearTimeout(timer);
       return result;
