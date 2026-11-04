@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Report, run, hasCmd, sleep } from './lib.mjs';
 import { openVaultFolder } from '../hub/vault/store.mjs';
 import { unlockWithPaperCode } from '../hub/vault/header.mjs';
-import { PULL_RECORD } from './p10-store.mjs';
+import { PULL_RECORD, isPullRoot } from './p10-store.mjs';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
 
@@ -20,6 +20,11 @@ async function check(r) {
     rec = JSON.parse(readFileSync(PULL_RECORD, 'utf8'));
   } catch (e) {
     r.add('record', `none (${e.code || e.message}): run the probe first: sh probes/run-all.sh --only 10`);
+    return;
+  }
+  if (!isPullRoot(rec.root)) { // never remove a folder that is not the pull test's own
+    r.add('record', 'the record looks wrong, nothing removed');
+    process.exitCode = 1;
     return;
   }
   r.add('last save that finished before the pull', rec.lastDone);

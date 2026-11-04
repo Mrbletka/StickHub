@@ -6,7 +6,7 @@
 
 import { mkdirSync, rmSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { stats, sleep } from './lib.mjs';
@@ -17,6 +17,12 @@ import { Store, openVaultFolder } from '../hub/vault/store.mjs';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'out');
 export const PULL_RECORD = join(OUT, 'p10-pull.json');
+export const PULL_DIR_NAME = '.stickhub-probe10-pull';
+
+/** True if root is the pull test's own folder (p10-check.mjs removes nothing else). */
+export function isPullRoot(root) {
+  return typeof root === 'string' && basename(root) === PULL_DIR_NAME;
+}
 const ms = (t) => Math.round(performance.now() - t);
 const NOTE = (i) => `note ${i} ${randomBytes(1000).toString('hex')}`.slice(0, 2048); // about 2 KB
 
@@ -101,7 +107,7 @@ async function measure(r, label, base) {
 
 /** The pull test: saves in a loop until the stick is pulled. */
 async function pullTest(r, stickRoot, ask) {
-  const root = join(stickRoot, '.stickhub-probe10-pull');
+  const root = join(stickRoot, PULL_DIR_NAME);
   rmSync(root, { recursive: true, force: true });
   const dir = join(root, 'data');
   mkdirSync(root, { recursive: true });
