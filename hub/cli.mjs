@@ -4,8 +4,10 @@
 //   node hub/cli.mjs sync plan [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
+//   node hub/cli.mjs login [--open]      fresh one-time login link (if the hub page says "Log in")
+//   node hub/cli.mjs open                start the hub if needed and open it
+//   node hub/cli.mjs hub stop            stop the hub and its apps
 
-import { request } from 'node:http';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listVolumes } from './platform/termux.mjs';
@@ -14,8 +16,10 @@ import { createFsx } from './sync/fsx.mjs';
 import { findStick, readStick, initStick } from './stick.mjs';
 import { SyncRun } from './sync/runner.mjs';
 import { pullCode } from './sync/pull-code.mjs';
-import { deviceId } from './config.mjs';
-import { HUB_PORT } from './server.mjs';
+import { deviceId, stickhubHome } from './config.mjs';
+import { readToken } from './auth.mjs';
+import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs';
+import { openUrl } from './platform/termux.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
@@ -23,7 +27,10 @@ const USAGE = `Usage:
   node hub/cli.mjs stick init [--name "My stick"] [--mount <dir>] [--force]
   node hub/cli.mjs sync plan [all|data|code] [--mount <dir>]
   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
-  node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]`;
+  node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
+  node hub/cli.mjs login [--open]
+  node hub/cli.mjs open
+  node hub/cli.mjs hub stop`;
 
 /** Split argv into words and --flags. */
 function parse(argv) {
@@ -31,7 +38,7 @@ function parse(argv) {
   const flags = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--force' || a === '--yes') flags[a.slice(2)] = true;
+    if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
     else if (a === '--name' || a === '--mount') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
@@ -61,20 +68,11 @@ async function pickStick(flags) {
 }
 
 /** Ids of apps the running hub has started (empty if the hub is not running). */
-function runningApps() {
-  return new Promise((resolve) => {
-    const req = request({ host: '127.0.0.1', port: HUB_PORT, path: '/api/apps', timeout: 1500,
-      headers: { host: `127.0.0.1:${HUB_PORT}` } }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => {
-        try { resolve(new Set(JSON.parse(body).filter((a) => a.status !== 'stopped' && a.status !== 'error').map((a) => a.id))); } catch { resolve(new Set()); }
-      });
-    });
-    req.on('timeout', () => { req.destroy(); resolve(new Set()); });
-    req.on('error', () => resolve(new Set())); // hub not running: no app runs
-    req.end();
-  });
+async function runningApps() {
+  const r = await callHub('/api/apps', { token: await readToken(stickhubHome()), timeout: 1500 });
+  if (!r) return new Set(); // hub not running: no app runs
+  if (r.status !== 200 || !Array.isArray(r.body)) throw new Error(`The hub answered ${r.status}; cannot tell which apps run. Stop the hub or try again.`);
+  return new Set(r.body.filter((a) => a.status !== 'stopped' && a.status !== 'error').map((a) => a.id));
 }
 
 const mb = (n) => `${(n / 1048576).toFixed(1)} MB`;
@@ -163,6 +161,24 @@ async function pull(flags) {
   return 0;
 }
 
+/** Print (and with --open, open) a fresh one-time login link. */
+async function login(flags) {
+  const url = await loginUrl(stickhubHome());
+  console.log(`${url}\nThis link works once, for about 60 s.`);
+  if (flags.open) {
+    const r = await openUrl(url);
+    if (!r.ok) console.log(`Could not open it (${r.error}). Copy the link into Chrome.`);
+  }
+  return 0;
+}
+
+/** Start the hub in the background if needed, then open it with a login link. */
+async function open() {
+  const r = await ensureHub(ROOT);
+  if (r.started) console.log(`Started the hub (pid ${r.pid}, log: logs/hub.log).`);
+  return login({ open: true });
+}
+
 async function main(argv) {
   const { words, flags } = parse(argv);
   const [a, b, c] = words;
@@ -170,6 +186,13 @@ async function main(argv) {
   if (a === 'stick' && b === 'init') return stickInit(flags).then(() => 0);
   if (a === 'sync' && (b === 'plan' || b === 'run')) return sync(b, c || 'all', flags);
   if (a === 'code' && b === 'pull-from-stick') return pull(flags);
+  if (a === 'login') return login(flags);
+  if (a === 'open') return open();
+  if (a === 'hub' && b === 'stop') {
+    if (!(await hubRunning())) { console.log('The hub is not running.'); return 0; }
+    console.log((await stopHub(stickhubHome())) ? 'The hub is stopping (apps first).' : 'The hub did not accept the stop.');
+    return 0;
+  }
   throw new UsageError(a ? `Unknown command: ${words.join(' ')}` : 'No command given');
 }
 

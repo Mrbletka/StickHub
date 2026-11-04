@@ -3,6 +3,7 @@
 // STICKHUB_MOUNTS (folders separated by ":") adds folders that act as sticks: for PCs and for testing.
 
 import { readFile, stat } from 'node:fs/promises';
+import { run } from './run.mjs';
 
 /**
  * Parse /proc/self/mountinfo text into mount points (space etc. are octal-escaped there).
@@ -52,3 +53,22 @@ export async function listVolumes(opts = {}) {
   }
   return { volumes, error };
 }
+
+// ---------- Termux:API actions (each one has a timeout; failures are returned, never thrown) ----------
+
+/** Open a URL in the browser (or the installed PWA, which captures URLs in its scope). */
+export const openUrl = (url) => run('termux-open-url', [url], { timeout: 10_000 });
+
+/**
+ * Show a notification. `action` is run by Termux when it is tapped (Termux runs it as a shell command,
+ * so callers must only pass fixed, checked strings).
+ */
+export const notify = ({ id, title, content, action }) => run('termux-notification',
+  ['--id', id, '--title', title, '--content', content, ...(action ? ['--action', action] : [])], { timeout: 10_000 });
+
+/** Short message at the bottom of the screen. */
+export const toast = (text) => run('termux-toast', ['-s', text], { timeout: 10_000 });
+
+/** Keep the CPU awake while the watcher runs (Android may otherwise freeze Termux). */
+export const wakeLock = () => run('termux-wake-lock', [], { timeout: 10_000 });
+export const wakeUnlock = () => run('termux-wake-unlock', [], { timeout: 10_000 });
