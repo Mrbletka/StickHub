@@ -7,6 +7,8 @@
 //   node hub/cli.mjs login [--open]      fresh one-time login link (if the hub page says "Log in")
 //   node hub/cli.mjs open                start the hub if needed and open it
 //   node hub/cli.mjs hub stop            stop the hub and its apps
+//   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
+//   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +22,7 @@ import { deviceId, stickhubHome } from './config.mjs';
 import { readToken } from './auth.mjs';
 import { callHub, loginUrl, ensureHub, stopHub, hubRunning } from './hubctl.mjs';
 import { openUrl } from './platform/termux.mjs';
+import { watchCommand, widgetInstall } from './cli-watch.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
@@ -30,7 +33,9 @@ const USAGE = `Usage:
   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
   node hub/cli.mjs login [--open]
   node hub/cli.mjs open
-  node hub/cli.mjs hub stop`;
+  node hub/cli.mjs hub stop
+  node hub/cli.mjs watch start|stop|status
+  node hub/cli.mjs widget install`;
 
 /** Split argv into words and --flags. */
 function parse(argv) {
@@ -187,6 +192,8 @@ async function main(argv) {
   if (a === 'sync' && (b === 'plan' || b === 'run')) return sync(b, c || 'all', flags);
   if (a === 'code' && b === 'pull-from-stick') return pull(flags);
   if (a === 'login') return login(flags);
+  if (a === 'watch') return watchCommand(b, ROOT, stickhubHome());
+  if (a === 'widget' && b === 'install') return widgetInstall(ROOT);
   if (a === 'open') return open();
   if (a === 'hub' && b === 'stop') {
     if (!(await hubRunning())) { console.log('The hub is not running.'); return 0; }
