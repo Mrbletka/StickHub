@@ -218,6 +218,8 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   beyond the 2 newest, never packs, damaged files or headers) when an index file or a header copy is damaged; none
   at all when the order of the indexes is unclear. Compaction never runs while there are problems. At 200 files in
   _index commits are refused (NEEDS_REPAIR). File times are never used.
+- `node hub/cli.mjs vault verify|export` (hub/cli-vault.mjs): passphrase only from the terminal (no echo), never argv,
+  env or a file; export never writes plain files on a stick, in the vault folder or in this clone.
 - Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,
   passphrases or paper codes; a VaultError message never contains an input value (test/vault-nosecrets.test.mjs).
   zero() keys when done. KDF settings and everything else read from a stick are checked before any KDF runs.

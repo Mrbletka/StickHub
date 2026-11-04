@@ -699,6 +699,23 @@ Deviations and choices, with the reason:
    to at most 64 MiB, at most 256 files in `_index` and 20,000 in `_packs`.
 9. Files whose names are not canonical vault names are never touched, in `_index`, `_packs` or the folder itself.
 
+### v1 step 2, part 2: fixes C1-C4 and `vault verify` / `vault export` (D)
+- C1-C4 (commit f219982): see 8.6 and deviation 10 above.
+- `vault verify <folder> [--quick] [--paper] [--json]` (`hub/vault/verify.mjs`, `hub/cli-vault.mjs`): no writes.
+  Quick: both header copies parse, pass the MAC and are equal; every index decrypts and passes its checks; every pack a
+  valid index uses exists with the right size. Full (default): also decrypts every segment of those packs, reads their
+  tables of contents and checks every file and trash entry of the newest index against its content id. Output: counts
+  and random file names only. Exit 1 on any problem. Missing packs plus a newer index on disk (the running hub cleaned
+  up) -> it checks once more.
+- `vault export <folder> <dest> [--paper]` (`hub/vault/export.mjs`): the destination is checked before the passphrase
+  is asked (missing or empty; not inside the vault folder, not inside this clone, not on a mounted volume). Files are
+  read in 4 MiB chunks (`store.readChunks`, content id checked after the last chunk), written as `<name>.part` and
+  renamed only after the check; empty folders are created; every path is checked to stay inside the destination. A
+  pack missing because the running hub cleaned up -> one reopen with the same data key (`store.reopen()`, no KDF); a
+  second miss is damage. Exit 1 on any failure.
+- The passphrase or paper code is read on the terminal in raw mode with no echo (`hub/cli-prompt.mjs`: typing, paste,
+  bracketed paste, Backspace, Ctrl-U, Ctrl-C; escape sequences ignored). A stdin that is not a terminal is refused.
+
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),
    pattern hint on the lock screen, devices page, remove a device (rekey), `vault lock --hard` and the **StickHub

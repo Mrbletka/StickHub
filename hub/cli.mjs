@@ -11,6 +11,7 @@
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
 //   node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]   a new app from a starter
 //   node hub/cli.mjs doctor [--json]     what this device has and lacks for StickHub, and how to fix it
+//   node hub/cli.mjs vault verify|export ...   check an encrypted vault folder, or export it to plain files
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +30,7 @@ import { createApp } from './scaffold.mjs';
 import { runDoctor, formatReport, realCtx } from './doctor.mjs';
 import { loadApp } from './apps.mjs';
 import { loadEngines } from './engines.mjs';
+import { vaultCommand, VAULT_USAGE } from './cli-vault.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
@@ -43,7 +45,8 @@ const USAGE = `Usage:
   node hub/cli.mjs watch start|stop|status
   node hub/cli.mjs widget install
   node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]
-  node hub/cli.mjs doctor [--json]`;
+  node hub/cli.mjs doctor [--json]
+${VAULT_USAGE.replace('Usage:\n', '')}`;
 
 /** Split argv into words and --flags. */
 function parse(argv) {
@@ -211,6 +214,9 @@ async function newApp(id, flags) {
 }
 
 async function main(argv) {
+  if (argv[0] === 'vault') { // own options (--paper, --quick): handled before the general parser
+    return vaultCommand(argv.slice(1), { root: ROOT, mounts: async () => (await listVolumes()).volumes.map((v) => v.mountPoint) });
+  }
   const { words, flags } = parse(argv);
   const [a, b, c] = words;
   if (a === 'stick' && b === 'status') return stickStatus().then(() => 0);

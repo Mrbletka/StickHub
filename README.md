@@ -51,6 +51,15 @@ node hub/cli.mjs open                              # start the hub if needed, op
 node hub/cli.mjs hub stop                          # stop the hub and its apps
 node hub/cli.mjs watch start|stop|status           # the watcher
 ```
+
+## Encrypted vault (being built; not used by the hub yet)
+```sh
+node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]   # check everything, write nothing
+node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # decrypt all notes to plain files
+```
+Both ask for the passphrase (or with `--paper` the paper code) on the terminal, with no echo; never as an argument.
+`export` refuses a folder on the stick, inside the vault, inside this clone, or one that is not empty. The exported
+files are **not encrypted**: delete them when you no longer need them. See `docs/VAULT-DESIGN.md`.
 - The hub finds the stick by itself (`/proc/self/mountinfo`, every 2 s) and syncs on plug-in and after an app stops.
 - Code: git is the master. Only `hub/` and `apps/` go to the stick, and only when the clone has no uncommitted
   changes and the stick has an older commit. A different or newer commit on the stick is never overwritten.

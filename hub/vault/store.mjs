@@ -14,7 +14,8 @@ import { zero } from './bytes.mjs';
 import { subkeys } from './keys.mjs';
 import { parseHeader, verifyHeaderMac } from './header.mjs';
 import { buildPacks } from './packs.mjs';
-import { PackReader, readRange } from './store-read.mjs';
+import { PackReader, readRange, readChunks } from './store-read.mjs';
+import { verifyReplica } from './verify.mjs';
 import { encodeIndex, decodeIndex, usage, INDEX_LIMITS } from './indexfile.mjs';
 import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createReplica, PACK_DIR } from './replica.mjs';
 import { runCleanup } from './cleanup.mjs';
@@ -27,7 +28,7 @@ export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexByte
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #q = []; #running = null; #reads = 0;
-  #packs; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0;
+  #packs; #opts; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0;
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -67,6 +68,7 @@ export class Store {
     s.#now = o.now || Date.now;
     s.#limits = { ...STORE_LIMITS, ...o.limits };
     s.#autoEvery = o.autoCleanupEvery ?? 16;
+    s.#opts = { guard: o.guard, random: o.random, now: o.now, limits: o.limits, autoCleanupEvery: o.autoCleanupEvery };
     s.#keys = subkeys(s.#dk, o.header.vaultId, o.header.epoch);
     s.#ctx = { kFile: s.#keys.file, vaultId: o.header.vaultId, epoch: o.header.epoch };
     s.#packs = new PackReader(dir, s.#vfs, s.#ctx);
@@ -149,6 +151,35 @@ export class Store {
     } finally {
       this.#reads--;
     }
+  }
+
+  /**
+   * A whole file in chunks of at most 4 MiB (export, verify): never all of a big file in memory. The content id is
+   * checked after the last chunk; if the iteration throws, throw away what it gave.
+   * @param {string} p
+   * @returns {AsyncGenerator<Buffer>}
+   */
+  async *readChunks(p) {
+    const e = this.#entry(p);
+    if (e.kind !== 'f') fail('IS_DIR', 'That is a folder.');
+    this.#reads++;
+    try {
+      for await (const c of readChunks(this.#packs, e, this.#keys.contentId)) yield c.data;
+    } finally {
+      this.#reads--;
+    }
+  }
+
+  /** Check the whole replica folder; no writes (verify.mjs). @param {{quick?: boolean}} [o] */
+  verify(o = {}) {
+    return this.#task(() => verifyReplica({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, kId: this.#keys.contentId, quick: !!o.quick }));
+  }
+
+  /** A new store on the same folder with the same data key (no KDF): sees what another process wrote meanwhile. */
+  reopen() {
+    this.#usable();
+    const dk = Buffer.from(this.#dk);
+    return openVaultFolder(this.#dir, async (h) => { verifyHeaderMac(h, dk); return dk; }, this.#opts);
   }
 
   // ---- changes (queued; writes of the same moment share one commit) ----
