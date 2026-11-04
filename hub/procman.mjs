@@ -23,7 +23,8 @@ import { RingLog } from './ringlog.mjs';
 export class ProcessManager extends EventEmitter {
   /**
    * @param {{engines: Map<string, object>, appsDir: string, dataDir: string,
-   *   portRange?: {from: number, to: number}, startTimeoutMs?: number}} opts
+   *   portRange?: {from: number, to: number}, startTimeoutMs?: number, pidFile?: import('./proc.mjs').PidFile}} opts
+   *   pidFile: where running app processes are remembered (for cleanup after a hard kill)
    */
   constructor(opts) {
     super();
@@ -32,6 +33,7 @@ export class ProcessManager extends EventEmitter {
     this.dataDir = opts.dataDir;
     this.portRange = opts.portRange || { from: 4100, to: 4199 };
     this.startTimeoutMs = opts.startTimeoutMs;
+    this.pidFile = opts.pidFile || null;
     /** @type {Map<string, import('./apps.mjs').App>} */
     this.apps = new Map();
     /** @type {Map<string, {status: string, port: number|null, url: string|null, error: string|null, startedAt: number|null, handle: any, log: RingLog}>} */
@@ -108,6 +110,7 @@ export class ProcessManager extends EventEmitter {
           log: (stream, line) => this.#log(id, stream, line),
         });
         this.#set(id, { status: 'running', port: handle.port, url: handle.url, startedAt: Date.now(), handle });
+        if (handle.pid && handle.argv) await this.pidFile?.add(id, handle.pid, handle.argv);
         this.#log(id, 'sys', `running at ${handle.url}`);
         handle.exit?.then((r) => this.#onExit(id, handle, r));
         return this.view(id);
@@ -127,6 +130,7 @@ export class ProcessManager extends EventEmitter {
       this.#set(id, { status: 'stopping' });
       try {
         await s.handle.stop();
+        await this.pidFile?.remove(id);
         this.#log(id, 'sys', 'stopped');
         this.#set(id, { status: 'stopped', port: null, url: null, startedAt: null, handle: null, error: null });
       } catch (e) {
@@ -162,6 +166,7 @@ export class ProcessManager extends EventEmitter {
   #onExit(id, handle, r) {
     const s = this.state.get(id);
     if (!s || s.handle !== handle || s.status !== 'running') return;
+    this.pidFile?.remove(id);
     const why = r.error ? r.error.message : r.signal ? `killed by ${r.signal}` : `exit code ${r.code}`;
     this.#log(id, 'sys', `the app stopped by itself (${why})`);
     this.#set(id, { status: r.code === 0 ? 'stopped' : 'error', error: r.code === 0 ? null : `Stopped by itself (${why})`,

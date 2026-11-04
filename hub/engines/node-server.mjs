@@ -32,7 +32,8 @@ export default {
     // Never a shell: process.execPath + argument array. The app sees only its own HUB_* values.
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HUB_')));
     Object.assign(env, app.manifest.env, ctx.env);
-    const child = spawn(process.execPath, [entry, ...app.manifest.args], {
+    const argv = [process.execPath, entry, ...app.manifest.args];
+    const child = spawn(argv[0], argv.slice(1), {
       cwd: app.dir, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
 
@@ -65,7 +66,8 @@ export default {
       await stop();
       throw new Error(`health check failed: ${health.error}`);
     }
-    return { port, url: `http://127.0.0.1:${port}/`, stop, exit, pid: child.pid };
+    // argv: the exact command line, so leftovers can be recognised after a hard hub kill (hub/proc.mjs).
+    return { port, url: `http://127.0.0.1:${port}/`, stop, exit, pid: child.pid, argv };
   },
 };
 

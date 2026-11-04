@@ -12,6 +12,7 @@ import { codeCommit } from './version.mjs';
 import { StickService } from './sync/service.mjs';
 import { loadToken, LoginCodes } from './auth.mjs';
 import { stickhubHome } from './config.mjs';
+import { PidFile, cleanupLeftovers } from './proc.mjs';
 
 export const HUB_PORT = 8787;
 const HUB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -32,9 +33,12 @@ export async function createHub(opts = {}) {
   const codes = new LoginCodes();
   const port = opts.port ?? HUB_PORT;
   const { engines, errors: engineErrors } = await loadEngines();
+  const pidPath = join(home, 'apps-running.json');
+  // Apps left running by an earlier hub that was killed hard: stop them first (only if their command line matches).
+  for (const line of await cleanupLeftovers(pidPath)) console.log(`leftover ${line}`);
   const procman = new ProcessManager({
     engines, appsDir: opts.appsDir || join(root, 'apps'), dataDir: opts.dataDir || join(root, 'data'),
-    portRange: opts.portRange, startTimeoutMs: opts.startTimeoutMs,
+    portRange: opts.portRange, startTimeoutMs: opts.startTimeoutMs, pidFile: new PidFile(pidPath),
   });
   await procman.reload();
   const commit = await codeCommit(root).catch(() => null);
