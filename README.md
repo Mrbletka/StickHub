@@ -66,6 +66,8 @@ By hand: make `apps/<id>/app.json` (id: a-z, 0-9, "-"; must match the folder nam
 - `node-server`: the hub runs `entry` with its own Node. Listen on `process.env.PORT` at 127.0.0.1.
   Keep saves in `process.env.HUB_DATA_DIR`. Exit cleanly on SIGTERM. Optional `"health": "/path"`.
 - `static`: the hub serves the folder `entry` (default: the app folder). `"spa": true` sends unknown paths to index.html.
+- `"port": 4110` gives an app a fixed port (other apps never get it), so its localStorage survives restarts.
+- `"atomicData": true`: the app writes its data only with temp file + rename, so sync may copy it while the app runs.
 - The app gets `PORT`, `HUB_APP_ID`, `HUB_APP_DIR`, `HUB_DATA_DIR`. Then reload the hub page
   (or `curl -X POST http://127.0.0.1:8787/api/apps/reload`).
 

@@ -89,6 +89,9 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
   server (the starter has GET/PUT /api/save with atomic writes), stop cleanly on SIGTERM, Node built-ins only,
   run alone with `PORT=4100 node server.mjs`.
 - static apps: files only, no saves.
+- `"port": <number>` = fixed port (never handed to another app): use it when the app keeps UI state in localStorage.
+- `"atomicData": true` only if the app writes data exclusively with temp file + rename: then sync copies its data
+  while it runs (no "pending").
 - Browser storage (localStorage, IndexedDB) is not synced, so no saves there.
 - Apps open full screen in the hub player (iframe, own port). Phone first: about 423x930 CSS px, touch, no hover.
   Weak GPU, two fast cores: 2D canvas or light WebGL, aim for 60 fps.
@@ -114,7 +117,9 @@ Adding an engine = adding one file. Leave room for cli, custom command and game-
 
 ## UI (vanilla, mobile-first, installable PWA)
 - Dark, AMOLED black. Big tile grid: icon, name, status dot. Tap = start (if needed) and open. Long-press = menu (stop, restart, logs).
-- Player: a running app opens full screen in an iframe inside the hub page, with a small floating (draggable) Home button.
+- Player: a running app opens full screen in an iframe inside the hub page, with a small floating (draggable) Home button
+  (default: middle of the left edge, because apps often have a menu in the top corners).
+  The hub's viewport has interactive-widget=resizes-content, so the soft keyboard shrinks the player and the app.
   Android back = Home. Apps keep their own port = own origin, so they cannot read the hub token. Same host = same site,
   so Chrome does not partition their storage. (Not a reverse proxy under /app/<id>/: that would put every app on the
   hub's origin, next to the token.)
@@ -168,6 +173,7 @@ A finished phase is recorded here with its commit hash (no git tags).
 4. Windows launcher + portable Node: **design only, later**. Not now.
 
 Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` (see "Making apps").
+- App #1 Notebook (apps/notebook): notes as plain files in HUB_DATA_DIR/vault, VS Code-style Explorer. See its README.
 
 ## Delivery
 - Small, logical commits with clear messages (imperative: "Add ...", "Fix ..."). Push to main after each working step.
