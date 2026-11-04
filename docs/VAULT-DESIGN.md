@@ -1,9 +1,33 @@
-# Encrypted vault: design (draft for review)
+# Encrypted vault: design (reviewed)
 
-Status: **design only, nothing is built.** Claude and Fabian review this first.
+Status: **design only, nothing is built.** Reviewed by Claude and Fabian on 2026-11-04; the decisions are in
+section 0 and are folded into the sections below.
 Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, run 7) and are marked **(p9)**.
-Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not known yet: what is in front
-after the touch in the fingerprint box (section 5); the hub brings its page back either way.
+Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet. Not known: what is in front after
+the touch in the fingerprint box (Fabian could not tell); the hub brings its page back either way (section 5).
+
+## 0. Decisions after review
+| # | Decision |
+|---|---|
+| 1 | Device slot: result B as designed (RSA-2048, `-u 30`, try `sign` first, fingerprint box only if needed). The only fallback is **passphrase at every start**; no soft slot |
+| 2 | The phone copy is encrypted too |
+| 3 | Apps use the data API. The client looks like normal file functions (`readFile`, `writeFile`, `readdir`, `rename`, `mkdir`, `rm`, `stat`), so a port is one small change. `hub new` gives new apps the client by default. Plain files when an app runs alone |
+| 4 | Auto-lock after 5 min with no visible hub page; also lock when the stick is pulled in data-on-stick mode |
+| 5 | The hub generates a passphrase of 5 random words by default (EFF large word list, 7776 words, CC BY 3.0 US, with attribution). An own passphrase only with 20+ characters |
+| 6 | Argon2id m = 256 MiB, t = 3, p = 4 (0.9 s on the phone). The limits in 4.2 stay |
+| 7 | A vaulted stick gets a new marker (format 2), so an old hub ignores it |
+| 8 | Plain data left on the flash chips from before the vault stays a known limit. Fabian decides about a fresh stick |
+| 9 | Paper code: 28 characters. Using it always shows a NEW paper code. Rekey only on request |
+| 10 | Vault trash: 30 days |
+| 11 | App browser state that holds names is cleared on lock |
+| 12 | Windows/portable, offline new phone, WebAuthn: later, not now |
+| A | Two releases. **v1** = passphrase + paper code only, end to end (store, data API, Notebook port, sync, migration, lock). **v2** = device slot. v2 must not block v1 |
+| B | `vault export <folder>` (decrypt everything to plain files in a folder Fabian names) and `vault verify` (read and check every file) come early, in build step 2. Before the first migration: a plain backup tar on the phone, its path printed; doctor warns while it exists |
+| C | Hard lock: `vault lock --hard` and a Termux:Widget shortcut **StickHub lock**: lock and delete this phone's device secret (and its Keystore key). Then only the passphrase or the paper code opens the vault until the phone enrolls again. Reason: a fingerprint can be forced; a passphrase in the head is harder |
+| D | Passphrase and paper-code fields: Chrome must not offer to save them, Gboard must not learn them (section 7.9). Checked by hand in probe 10 |
+| E | A Keystore signature counts only if it is exactly 256 bytes, never by exit code |
+| F | Unlock attempts on the hub API are rate-limited (section 7.9) |
+| G | Fabian after p9: the fingerprint box has no pattern button; what is in front after the touch is not known. So the unlock flow always brings the hub page back after the box, and the pattern fallback is the lock screen (section 5) |
 
 ## 1. Summary
 - Today the app data on the stick (`HUB/data/`) is plain files. Whoever finds the stick reads everything.
@@ -44,7 +68,8 @@ App data (notes, saves) and its metadata (file names, folders, sizes, how many f
 ### Out of scope (honest limits)
 - Malware, root, or any other process running as Termux on an **unlocked** phone. It can read the hub's memory, use
   the device key during its time window, or record the passphrase. No design here stops that.
-- Being forced to unlock (by a person or by law).
+- Being forced to unlock (by a person or by law). Partial help: the hard lock (7.3) removes the fingerprint path, so
+  only a passphrase in your head or the paper code opens the vault.
 - Attacks on the phone's hardware or Android itself (TEE bugs, lock-screen bypass, cold-boot, chip-off forensics).
 - Key material in memory: JavaScript cannot pin memory; keys may be copied by the garbage collector or written to
   swap (ColorOS "RAM expansion" swaps to the phone's storage). We zero key buffers on lock, as best effort only.
@@ -56,7 +81,7 @@ App data (notes, saves) and its metadata (file names, folders, sizes, how many f
 - Chrome and the keyboard: Gboard may learn words you type in notes; screenshots; apps' own browser storage
   (section 8.5). Data API answers are sent with `Cache-Control: no-store`.
 - Plain data written to the stick **before** the vault may still be on its flash chips after migration (a USB stick
-  cannot be reliably overwritten). See open question 8.
+  cannot be reliably overwritten). A known limit; Fabian decides about a fresh stick (decision 8).
 - Nothing is "unhackable". The goal is: a lost stick, or a lost locked phone, does not give away the data.
 
 ### What a stick finder can still see
@@ -110,7 +135,13 @@ DK (32 random bytes, one per epoch)
 - The KDF settings are read from the stick before unlocking, so they are checked: Argon2id m <= 1 GiB, t <= 10,
   p <= 8; scrypt N <= 2^20. Anything else is refused (a tampered stick must not make the phone run out of memory).
 - This slot is what a stick finder attacks offline. Argon2id makes each guess slow and memory-heavy (256 MiB per
-  guess, on any hardware), but a short or common passphrase still falls. Rule proposal: at least 5 random words or 20 characters (open question 5).
+  guess, on any hardware), but a short or common passphrase still falls. So (decision 5):
+  - By default the hub **generates** the passphrase: 5 words picked with `crypto.randomInt` from the EFF large word
+    list (7776 words, about 64.6 bits). The list ships as `hub/vault/wordlist-eff-large.txt` with the words only (the
+    dice numbers removed); it is licensed CC BY 3.0 US, so the file header and the README credit the Electronic
+    Frontier Foundation, link the source and the license, and say what was changed.
+  - An own passphrase is accepted only with 20 or more characters (counted after NFKC).
+- KDF: Argon2id m = 256 MiB, t = 3, p = 4 (decision 6).
 
 ### 4.3 Device slot (b) **(p9)**
 - One per enrolled phone. The phone keeps two things, never on the stick, never in git:
@@ -172,7 +203,7 @@ Measured **(p9, termux-api 0.60.0)**:
   after the touch, so the hub always brings its page back.
 
 The build:
-- Key: RSA-2048, `generate -u 30` (open question 1).
+- Key: RSA-2048, `generate -u 30` (decision 1).
 - Unlock: first try `sign` (1.2 s). If the phone was unlocked in the last 30 s (you usually unlock it, then plug in
   the stick or tap the widget), that is all: no extra touch. If `sign` gives nothing:
   `termux-fingerprint -t "Unlock StickHub"`, then `sign` again, then `termux-open-url` to bring StickHub back to the
@@ -191,7 +222,12 @@ Honest strength:
 
 If it ever stops working (a Termux:API update changes the output, signatures stop being the same, the key is gone),
 the device slot fails, the passphrase opens the vault, and the phone enrolls again (section 7.8). The safest
-fallback, if the Keystore could not be trusted at all, stays: passphrase at every hub start, no device slot.
+fallback, if the Keystore could not be trusted at all, stays: passphrase at every hub start, no device slot. There is
+no "soft" slot (decision 1).
+- A signature counts only if `sign` gave exactly 256 bytes; the exit code is ignored (decision E).
+- Still to measure in probe 10 (v2): what is in front after the touch, and whether to try the sign before opening the
+  page (about 1 s slower on the fast path, but on the box path the screen jumps only once). Until then: try the sign
+  and open the page at the same time, and always bring the page back after the box.
 
 ## 6. File format
 
@@ -199,7 +235,8 @@ fallback, if the Keystore could not be trusted at all, stays: passphrase at ever
 ~~~
 <stick root>/START-HERE.txt   plain: what this is and how to add a new phone (no secrets)
 HUB/
-  stick.json                  plain, as now, plus "vault": 1 (format 2)
+  stick-v2.json               plain marker of a vaulted stick (format 2): same fields as stick.json plus "vault": 1.
+                              There is no stick.json, so an old hub sees no stick and touches nothing (decision 7)
   hub/ apps/ .index.json      code snapshot, plain, unchanged
   data/                       THE VAULT
     vault.json                header: slots, KDF settings, header MAC
@@ -216,8 +253,9 @@ Phone (data-on-stick mode): ~/StickHub/data/vault.json only (a header copy, so u
 ~/.stickhub/run/data.sock            data API socket (apps -> hub)
 ~~~
 `<id>` = 26 random lower-case base32 characters (128 bits). Names say nothing about the content.
-Folder names start with `_`, which no app id can, so today's sync skips them as "not an app folder" (but see open
-question 7: an old hub could still write plain data next to them).
+Folder names start with `_`, which no app id can. The new hub reads `stick-v2.json` first and `stick.json` for sticks
+without a vault. An old hub looks only for `stick.json`, so it finds nothing: no sync, no plain data written. (Its
+`stick init --force` could still write a new `stick.json`; START-HERE.txt and the README say to update first.)
 
 ### 6.2 Header (`vault.json`)
 ~~~json
@@ -294,19 +332,25 @@ reported with the file's random name only.
 Key changes (setup, add device, change passphrase, new paper code, remove device) need the stick plugged in.
 
 ### 7.1 Setup (once, on the phone that has the data today)
-1. Update every device first (`git pull`), so no old hub writes plain data to the stick (open question 7).
+1. Update this phone (`git pull`). Other devices with an old hub ignore the vaulted stick (new marker, 6.1) until
+   they are updated.
 2. In the hub: **Set up the vault** (or `node hub/cli.mjs vault setup`). Doctor checks: stick, Termux:API, screen lock.
-3. Choose the passphrase (typed twice, strength hint). Argon2id runs (0.9 s on the phone, p9).
+3. The hub shows a generated 5-word passphrase (or you type your own, 20+ characters, twice). Argon2id runs (0.9 s on
+   the phone, p9).
 4. The paper code is shown once; you write it down and type two groups back.
-5. This phone's device slot is enrolled: Keystore key made (`-u 30`), fingerprint asked, two signatures compared
-   (section 4.3).
-6. Migration: a normal plain sync first, so phone and stick agree. Then every file goes into the phone replica, the
-   stick replica is written, and **every file is read back and compared** with the original. Only then the plain
-   copies are removed: phone `data/`, `.trash/`, `sync-state.json`; stick `HUB/data/<app>/` and `HUB/.trash/*/data/`.
+5. v2 only: this phone's device slot is enrolled: Keystore key made (`-u 30`), fingerprint asked, two signatures
+   compared (section 4.3). In v1 there is no device slot.
+6. Migration: a normal plain sync first, so phone and stick agree. Then a **plain backup tar** of the phone's `data/`
+   is written to `~/stickhub-plain-backup-<date>.tar` (Termux home, never on the stick, never in the clone); its path
+   is printed, and the doctor warns while it exists ("plain copy of your data: delete it when the vault works").
+   Then every file goes into the phone replica, the stick replica is written, and **every file is read back and
+   compared** with the original. Only then the plain copies are removed: phone `data/`, `.trash/`, `sync-state.json`; stick `HUB/data/<app>/` and `HUB/.trash/*/data/`.
    Old hub logs with file names are cleared. Interrupted: the next start continues; plain files stay until the
-   check passes.
-7. `START-HERE.txt` is written to the stick.
-Writes: header (2 copies) on both sides, packs and index on both sides, the device files in `~/.stickhub/vault/`.
+   check passes. The backup tar stays until you delete it.
+7. `vault verify` runs once on both replicas. `START-HERE.txt` and `stick-v2.json` are written; `stick.json` is
+   removed last.
+Writes: header (2 copies) on both sides, packs and index on both sides, the backup tar; in v2 also the device files in
+`~/.stickhub/vault/`.
 
 ### 7.2 Unlock (daily)
 1. The hub starts locked (widget, or the watcher at plug-in). The page shows the lock screen; no app can start.
@@ -314,19 +358,25 @@ Writes: header (2 copies) on both sides, packs and index on both sides, the devi
    `termux-keystore sign` (no touch if the phone was unlocked in the last 30 s; else the fingerprint box, which
    switches to the Termux:API app, then sign again and bring the page back) -> HKDF -> unwrap DK -> check the header MAC ->
    read the newest index (phone replica; in data-on-stick mode the stick's) -> tiles.
-3. Cancelled or failed: buttons **Fingerprint**, **Passphrase**, **Paper code**.
+3. Cancelled or failed: buttons **Fingerprint**, **Passphrase**, **Paper code**. In v1, and after a hard lock, only
+   **Passphrase** and **Paper code**.
 4. Phone copy mode needs no stick to unlock. After unlocking, a plugged-in stick syncs in the background.
 The header copy on the phone lets the unlock start before the stick is even seen.
 
 ### 7.3 Auto-lock
 - Lock when no hub page has been visible for **5 minutes** (the page sends a heartbeat every 30 s while visible; a
   hidden, closed or frozen page stops sending). The hub page cannot see touches inside an app's iframe (another
-  origin), so visibility is the signal (open question 4).
+  origin), so visibility is the signal (decision 4).
 - Also lock: **Lock** button, `node hub/cli.mjs vault lock`, hub stop, and in data-on-stick mode when the stick is pulled.
+- **Hard lock** (decision C, v2): `node hub/cli.mjs vault lock --hard`, or the Termux:Widget shortcut **StickHub lock**
+  (`widget install` writes it to `~/.shortcuts/tasks/`). It locks, then deletes this phone's device secret and its
+  Keystore key. Until the phone enrolls again (passphrase, 7.8), only the passphrase or the paper code opens the
+  vault. Use it when someone could force your finger. In v1 there is no device secret, so it is a normal lock.
 - Locking: finish the commit in progress, stop all apps (SIGTERM, 1.2 s grace, as for "Stick removed"), close data API
   sessions, zero key buffers, drop the index. The page shows the lock screen; the player iframes are removed.
 - A crash or ColorOS killing Termux locks too: the keys only ever lived in that process.
 - While locked, the hub API shows no data names (no conflict lists, no sync details with paths).
+- App browser state that holds names is cleared on lock (decision 11, section 8.5).
 
 ### 7.4 Add a device
 1. On the new phone: install Termux and Termux:API (both from F-Droid), open the stick in Files, open `START-HERE.txt`.
@@ -343,9 +393,11 @@ command is the real one (section 2).
 ### 7.5 Recover with the paper code
 For a forgotten passphrase, or when no device can unlock.
 1. Lock screen: **Paper code**; type the 28 characters. The check characters point at a typo first.
-2. The code unwraps DK. You must then set a new passphrase, and a **new paper code** is shown (the old one was just
-   typed on a device). This device is enrolled if it was not.
-3. If the paper may have been seen by someone else: choose **Also replace the data key** (rekey, 7.7).
+2. The code unwraps DK. A **new paper code** is always shown (the old one was just typed on a device) and the old
+   recovery slot is replaced. If the passphrase was forgotten, set a new one too. v2: this device is enrolled if it
+   was not.
+3. No rekey by default. Only on request: **Also replace the data key** (rekey, 7.7), for example if the paper may
+   have been seen by someone else (decision 9).
 
 ### 7.6 Change the passphrase
 1. Unlocked, plus the current passphrase or a fresh fingerprint (someone at an unlocked hub must not lock you out).
@@ -369,9 +421,21 @@ removing a device always replaces the data key.
 What stays possible: whoever can unlock the lost phone can read what was on it until it was lost. Nothing written
 after the rekey.
 
-### 7.8 When the device key stops working
+### 7.8 When the device key stops working (v2)
 Screen lock removed, Termux:API data cleared, new phone, or a Termux:API update that changes `sign`: the device slot fails with a clear
 message ("This phone's key is gone"). Unlock with the passphrase; the old slot is replaced by a new one.
+
+### 7.9 Typing the passphrase and the paper code (decisions D, F)
+- Only the hub's own lock screen asks for them, never an app (apps are stopped while locked).
+- Fields: `type="password"` (masked; Android keyboards, Gboard included, do not learn from password fields),
+  `autocomplete="off"`, `autocapitalize="off"`, `autocorrect="off"`, `spellcheck="false"`, a random `name` and `id`
+  per page load, no username field and no `<form>` submit (the value is read by script, sent with `fetch`, and the
+  field is cleared at once), so Chrome has nothing to offer to save. Probe 10 checks by hand: no "Save password?",
+  no word suggestions, nothing learned afterwards.
+- Rate limit on the hub API (all callers together): the first 5 failed unlocks are free, then each next try waits
+  twice as long (2 s, 4 s ... up to 5 min). The count lives in `~/.stickhub/vault/attempts.json`, so a hub restart does
+  not reset it; a good unlock resets it. This only slows guessing at the phone; an offline attack on a copied stick
+  meets Argon2id instead.
 
 ## 8. Apps, Notebook, sync and atomic writes
 
@@ -384,8 +448,14 @@ system. So:
   ifMatch)` (atomic replace, returns the new content id), `mkdir`, `move(from, to, ifMatch)` (files or whole folders),
   `remove(paths)` (to the vault trash), `events` (what changed, for "changed somewhere else"). Errors: 404, 409
   (ifMatch failed or exists), 413, 423 (locked).
-- A small client module for apps wraps this with file-like functions. When an app runs alone
-  (`PORT=4110 node server.mjs`), the same module uses plain files in `./data`, as today.
+- The client module (`hub/appkit/hubfs.mjs`) looks like `node:fs/promises` for what apps use (decision 3):
+  `readFile`, `writeFile` (atomic), `readdir` (with `withFileTypes`), `rename`, `mkdir`, `rm`, `stat`, with the same
+  argument order and fs-style error codes (`ENOENT`, `EEXIST`, `ENOTEMPTY`). Extras: an `ifMatch` option on writes,
+  `tree(prefix)` and `watch()` for changes. Porting an app is mostly changing the import from `node:fs/promises` to
+  `./lib/hubfs.mjs`.
+- `node hub/cli.mjs new` copies the client into every new app (`lib/hubfs.mjs`) and the starter uses it. A test checks
+  that every app's copy equals the source.
+- When an app runs alone (`PORT=4110 node server.mjs`), the client uses plain files in `./data`, as today.
 - `HUB_DATA_DIR` is not given to apps once the vault is on. An app that still wants it shows a clear error on its
   tile instead of starting (one broken app never breaks the hub). The `app-rules` test checks every app.
 - Every write is atomic by construction, so every app behaves like `atomicData: true` and sync no longer waits for
@@ -428,18 +498,23 @@ Both replicas use the same DK, so sync runs while unlocked.
    one new stick index. Then the same towards the phone, then the phone index with the new base and `seenSeq`.
 5. Remove the journal, release the lock.
 Pulled out mid-sync: whatever index was committed rules; the next sync plans again and finishes (the plan is
-idempotent, as today). The trash keeps deleted files for 30 days, then compaction drops them (open question 10).
+idempotent, as today). The trash keeps deleted files for 30 days, then compaction drops them (decision 10).
 Code sync (`hub/`, `apps/`, git decides) is unchanged and stays plain. Triggers stay as now (plug-in, Sync now);
 because a data sync now costs a few file writes, a later step can also sync a few seconds after each change while
 the stick is plugged in.
 
 ### 8.5 Notebook
-- Its `lib/vault.mjs` (all file operations) is ported to the data client: `list` and `index` become one `tree()`
-  call, the write's `base` check becomes `ifMatch` with the content id (today it already compares a content hash),
+- Its `lib/vault.mjs` (all file operations) is ported to the client: mostly the import changes; `list` and `index`
+  can use one `tree()` call, the write's `base` check becomes `ifMatch` with the content id (today it already compares a content hash),
   rename/move/duplicate become index operations (fast, even on the stick), `.deleted/` stays a folder in its namespace.
 - Limits stay: a note up to 1 MB, 5,000 files.
 - `*.conflict-*` files and "changed somewhere else" work as today (the `events` call replaces looking at the files).
-- Its UI state in localStorage (open tabs, recent notes) contains note names, outside the vault (open question 11).
+- Its UI state in localStorage (open tabs, recent notes) contains note names, so it is cleared on lock (decision 11).
+  How, for every app that keeps names in browser storage: (1) before the hub stops an app (lock, stick pulled, stop),
+  the hub page loads that app's `/__hub/clear` in a hidden frame; the client's server helper answers it with
+  `Clear-Site-Data: "storage"`, which makes Chrome drop that origin's storage; (2) the app page also stores the app's
+  start id next to its state and drops the state when the id changed (covers a crash, where step 1 never ran).
+  Probe 10 checks that Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`.
 - The name "vault" inside the Notebook (`HUB_DATA_DIR/vault/`) is a different thing; it may be renamed to avoid
   confusion.
 
@@ -475,9 +550,10 @@ To avoid or shorten the fingerprint-box path:
    phone to tap). Plug-in then needs no unlock at all, unless the hub auto-locked.
 2. Poll mountinfo every 1 s instead of 2 s (0.7 ms per read): 0.5 s less on average.
 3. Option: try the sign before opening the page. That costs about 1 s on the fast path, but on the box path the
-   screen goes Termux:API -> StickHub only once (open question 1).
+   screen goes Termux:API -> StickHub only once (measured in probe 10, v2).
 4. Probe 10 (after the build) measures both paths and what is in front after the touch.
-The passphrase path is slower (typing + 0.9 s Argon2id) and is not the daily path.
+The passphrase path is slower (typing + 0.9 s Argon2id). In **v1** that is the only path, so v1 does not meet the
+10 s goal on a cold start; it does when the hub is already unlocked (plug-in then adds no unlock). The goal is for v2.
 
 ## 10. Tests
 All `node:test`, all must pass on the phone. The Keystore and Termux:API sit behind an adapter
@@ -509,40 +585,40 @@ the refusal), and one that prints nothing and exits 0 (what `termux-keystore sig
   signature, device secret or file name appears in logs or API errors.
 - **Migration and rekey**: all files verified before plain copies go; after a rekey no DK1 file is left and DK1 opens
   nothing; an interrupted run continues.
-- **Phone**: probe 10 after the build: plug-in to open with the fingerprint, one save on the stick, sync of 120
-  changed notes, compaction, pull mid-save.
+- **Passphrase generator**: always 5 words from the list, uniform (`randomInt`), list has exactly 7776 unique words;
+  own passphrases under 20 characters refused.
+- **Export and verify**: export writes every file with its name and content; verify reports a flipped byte in any
+  pack or index; export refuses a folder inside the clone or on the stick.
+- **Marker**: a vaulted stick has `stick-v2.json` and no `stick.json`; today's `findStick` sees it as blank.
+- **Rate limit**: waits double after 5 failures, survive a restart, reset after success.
+- **Hard lock**: the device secret and Keystore key are gone; the device slot fails; the passphrase still opens.
+- **Keystore adapter**: 0, 255 and 257 bytes = not unlocked, whatever the exit code.
+- **Phone**: probe 10 after the build (v1 part first): one save on the stick, sync of 120 changed notes, compaction,
+  pull mid-save, the field checks of 7.9, `Clear-Site-Data`; v2 part: plug-in to open with the fingerprint, what is in
+  front after the touch.
 
-## 11. Build order (proposal, after the review)
-1. `hub/vault/` crypto helpers: KDFs, slot wrap/unwrap, `.vx` files, paper code. Tests and fixtures.
-2. Store: header, index, packs, commit, cleanup, compaction. Unplug tests.
-3. Data API + client module; port the sample apps, then the Notebook.
-4. Sync between replicas (reusing `planData`), migration, rollback check.
-5. Keystore adapter (try sign, else `termux-fingerprint`, then sign), lock screen, setup, devices page, CLI (`vault setup|status|lock|devices|...`),
-   doctor checks (Termux:API, screen lock, Argon2id).
-6. START-HERE.txt and `cli.mjs setup` for new phones. Probe 10 on the phone.
+## 11. Build order
+**v1: passphrase + paper code, end to end.** No device slot; nothing in v1 waits for v2.
+1. `hub/vault/` crypto helpers: Argon2id (256 MiB, limits), slot wrap/unwrap for passphrase and paper code, `.vx`
+   files, paper code, passphrase generator with the EFF word list and its attribution. Tests and fixtures.
+2. Store: header, index, packs, commit, cleanup, compaction, 30-day trash. **`vault export <folder>` and
+   `vault verify`** here, so every later step can be checked and undone. Unplug tests.
+3. Data API + fs-like client (`hub/appkit/hubfs.mjs`), `hub new` uses it by default; port the sample apps, then the
+   Notebook (including clearing browser state on lock).
+4. Lock and unlock: lock screen with the safe fields (7.9), rate limit, auto-lock (5 min, stick pulled), CLI
+   `vault setup|status|lock|export|verify`, doctor checks (Argon2id, plain backup tar present).
+5. Sync between replicas (reusing `planData`), rollback check, the `stick-v2.json` marker.
+6. Migration (plain backup tar first, verify, then remove plain copies), change passphrase, new paper code, rekey on
+   request, START-HERE.txt and `cli.mjs setup` for a new phone (passphrase). Probe 10, v1 part, on the phone.
 
-## 12. Open questions
-1. **Device slot** (p9: time window, opened by the fingerprint or the pattern). (a) Fast path with `-u 30` (no touch
-   if the phone was unlocked in the last 30 s), or always show the fingerprint box (then `-u 10`; plug-in -> open about
-   12-15 s)? (b) At plug-in: open the page and try the sign at the same time (fastest when no box is needed), or
-   sign first and open the page after (about 1 s slower then, but on the box path the screen does not jump back
-   and forth)?
-2. **Phone copy encrypted too** (this design) so "locked" holds on the phone? The alternative keeps plain files on
-   the phone and apps unchanged, but then only the stick is locked.
-3. **Apps use the data API** instead of `HUB_DATA_DIR` (Notebook port, sample apps). Agreed?
-4. **Auto-lock**: 5 min with no visible hub page? Lock when the stick is pulled in data-on-stick mode?
-5. **Passphrase rule**: own passphrase of at least 5 words or 20 characters, or the hub generates words (needs a
-   word list in the repo, about 2,000-8,000 words)?
-6. **Argon2id settings**: 256 MiB, t = 3, p = 4 (0.9 s, 310 MB peak on the phone)? Or 512 MiB (about 2 s, more
-   memory pressure, and ColorOS may close other apps)?
-7. **Old hub versions**: "update every device before setup" enough, or rename the stick marker so an old hub ignores
-   a vaulted stick entirely (it would otherwise still copy plain phone data into `HUB/data/<app>/`)?
-8. **Flash remnants**: data stored plain on this stick before the vault may stay on its chips. Set up the vault on a
-   fresh stick and retire the old one?
-9. **Paper code**: 28 characters (130 bits + 2 check characters) OK? Always rekey when it is used, or only on request?
-10. **Vault trash**: keep deleted files 30 days?
-11. **Browser state with names** (Notebook's open tabs and recents in localStorage): move into the vault (then it
-    syncs between phones), clear on lock, or accept?
-12. **Later**: Windows / portable mode with passphrase only; a new phone without internet (code from the stick, with
-    `portable-check.mjs`); a device slot through WebAuthn in Chrome (a prompt per use, but the passkey syncs to the
-    Google account). None of these now.
+**v2: device slot.**
+7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then bring the page back),
+   pattern hint on the lock screen, devices page, remove a device (rekey), `vault lock --hard` and the **StickHub
+   lock** widget. Probe 10, v2 part: plug-in to open, what is in front after the touch, the order at plug-in.
+
+## 12. Still open
+All twelve review questions are decided (section 0). Left for later measurement, not for design:
+1. Probe 10 (v1): `Clear-Site-Data` on `http://127.0.0.1:<port>` in Chrome; the field checks of 7.9; vault costs on
+   the stick.
+2. Probe 10 (v2): what is in front after the fingerprint box; try the sign before or together with opening the page.
+3. Fabian: whether to move to a fresh stick before migrating (decision 8).
