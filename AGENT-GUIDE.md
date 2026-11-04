@@ -137,6 +137,7 @@ A finished phase is recorded here with its commit hash (no git tags).
 1. Core + engines (node-server, static) + UI + 2 sample apps. Done when `node hub/server.mjs` shows the grid, start/stop works and ports are freed.
    **Done: 3b45c50** (tested on the phone 2026-11-04).
 2. Stick layout + sync CLI (plan, run, conflicts, trash, unplug-safe). Test with a simulated interrupted copy.
+   **Done: b306b14** (tested on the phone and the real stick 2026-11-04, unplug mid-sync included; docs/PROBES.md run 3).
 3. PWA + watcher + token security. Done when: plug in -> hub open in 10 s or less.
 4. Windows launcher + portable Node (design only until I ask).
 

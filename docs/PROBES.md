@@ -73,3 +73,18 @@ Times are ms after the prompt, so they include how fast you moved.
 ### Decision
 The watcher reads `/proc/self/mountinfo` every ~2 s, finds `/storage/<uuid>` mounts and checks `HUB/stick.json`.
 No `termux-usb` polling, no `termux-setup-storage` (only once, at install, for storage permission).
+
+## Run 3 - 2026-11-04: probe 6, phase 2 sync on the real stick (code b306b14)
+| Step | Result |
+|---|---|
+| A first full sync (36 files: code + data) | ok, 5.6 s |
+| B 120 new data files (2-20 KB) | ok, 15.5 s = 129 ms per file |
+| C cancel after 10 files | cancelled cleanly; next sync finished the other 30 (5.0 s) |
+| D pulled out mid-sync | stopped with EIO on a rename, 22 files done, nothing broken |
+| D stick back after re-plug | 6.2 s (includes your hands) |
+| D sync after re-plug | finished the interrupted sync: 98 files, 15.6 s |
+| D one more sync | copied 0 (0.7 s), no .part files left |
+| E delete 120 files on the phone | moved to the stick .trash: 14.1 s (118 ms per file) |
+
+Every file written to the stick costs about 120-160 ms, as the speed probe predicted. An unplug mid-write gives EIO;
+the run stops, and the next run finishes the work with no leftovers.
