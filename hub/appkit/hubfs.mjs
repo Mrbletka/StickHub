@@ -94,10 +94,11 @@ function common(p) {
 // ---- socket mode ----
 
 function socketPrimitives(socketPath, token) {
+  const tok = typeof token === 'function' ? token : () => token;
   const call = (method, route, { json, body, query = '', headers = {} } = {}) => new Promise((ok, fail) => {
     const payload = body ?? (json ? Buffer.from(JSON.stringify(json)) : null);
     const req = http.request({ socketPath, method, path: `/v1/${route}${query}`, agent: false,
-      headers: { authorization: `Bearer ${token}`, ...(payload ? { 'content-length': payload.length } : {}), ...headers } }, (res) => {
+      headers: { authorization: `Bearer ${tok()}`, ...(payload ? { 'content-length': payload.length } : {}), ...headers } }, (res) => {
       const parts = [];
       res.on('data', (b) => parts.push(b));
       res.on('end', () => {
@@ -131,7 +132,7 @@ function socketPrimitives(socketPath, token) {
         try {
           r = JSON.parse((await call('GET', 'events', { query: since === null ? '' : `?since=${since}` })).buf.toString('utf8'));
         } catch (e) {
-          if (e.hubCode === 'UNAUTHORIZED' || e.hubCode === 'LOCKED') throw e;
+          if (e.hubCode === 'UNAUTHORIZED' || e.hubCode === 'LOCKED') throw e; // anything else: the hub is away, retry
           await new Promise((res) => setTimeout(res, o.retryMs ?? 1000));
           continue;
         }
@@ -235,7 +236,7 @@ function filePrimitives(root) {
 
 /**
  * A hubfs for given settings (tests, or several vaults). Default: from the environment.
- * @param {{socket?: string, token?: string, dir?: string}} [o]
+ * @param {{socket?: string, token?: string|(() => string), dir?: string}} [o]  token: a function is asked each request
  */
 export function createHubFs(o = {}) {
   const socket = o.socket ?? process.env.HUB_DATA_SOCKET;

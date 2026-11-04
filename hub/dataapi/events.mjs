@@ -21,10 +21,11 @@ export class EventLog {
     a.waiters.clear();
   }
 
-  /** Events after seq n. lost: n is older than the buffer (list again). */
+  /** Events after seq n. lost: n is older than the buffer, or newer than any seq (the hub restarted): list again. */
   since(appId, n) {
     const a = this.#app(appId);
-    if (n === undefined || n >= a.seq) return { seq: a.seq, lost: false, events: [] };
+    if (n === undefined || n === a.seq) return { seq: a.seq, lost: false, events: [] };
+    if (n > a.seq) return { seq: a.seq, lost: true, events: [] };
     const first = a.buf.length ? a.buf[0].seq : a.seq + 1;
     if (n < first - 1) return { seq: a.seq, lost: true, events: [] };
     return { seq: a.seq, lost: false, events: a.buf.filter((e) => e.seq > n) };
@@ -33,7 +34,7 @@ export class EventLog {
   /** since(), but waits up to ms for a first event when there is none yet (n given). */
   async wait(appId, n, ms) {
     const now = this.since(appId, n);
-    if (n === undefined || now.lost || now.events.length || n > now.seq) return now;
+    if (n === undefined || now.lost || now.events.length) return now;
     const a = this.#app(appId);
     await new Promise((resolve) => {
       const done = () => { clearTimeout(timer); a.waiters.delete(done); resolve(); };
