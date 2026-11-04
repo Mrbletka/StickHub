@@ -21,13 +21,14 @@ import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockR
 import { runCleanup } from './cleanup.mjs';
 import { createVfs } from './vfs.mjs';
 import { Draft, checkPath } from './store-ops.mjs';
+import { WriteQueue } from './queue.mjs';
 
 /** indexFiles: at this many files in _index new commits are refused (NEEDS_REPAIR); open refuses above 256. */
 export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexBytes: 16 * 1024 * 1024, fileBytes: INDEX_LIMITS.fileBytes, indexFiles: 200 });
 
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
-  #state; #current; #problems = []; #broken = false; #closed = false; #q = []; #running = null; #reads = 0;
+  #state; #current; #problems = []; #broken = false; #closed = false; #queue; #reads = 0;
   #packs; #opts; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0; #maintained = false; #dirty = false;
 
   /**
@@ -64,6 +65,7 @@ export class Store {
     s.#keys = subkeys(s.#dk, o.header.vaultId, o.header.epoch);
     s.#ctx = { kFile: s.#keys.file, vaultId: o.header.vaultId, epoch: o.header.epoch };
     s.#packs = new PackReader(dir, s.#vfs, s.#ctx);
+    s.#queue = new WriteQueue({ check: () => s.#usable(), runBatch: (batch) => s.#commit(batch) });
     try {
       const scan = await scanIndexes(dir, s.#ctx, s.#vfs);
       if (!scan.valid.length) fail(scan.damaged.length ? 'BAD_INDEX' : 'NO_INDEX', 'The vault has no readable index.');
@@ -241,7 +243,7 @@ export class Store {
     if (!this.#autoEvery || (this.#maintained && ++this.#sinceCleanup < this.#autoEvery)) return;
     this.#maintained = true;
     this.#sinceCleanup = 0;
-    this.#q.push({ kind: 'task', fn: () => this.#maintain(), resolve: () => {}, reject: (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; } });
+    this.#queue.background(() => this.#maintain(), (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; });
   }
 
   /** Replace the header (both copies). It must be for this vault and epoch, with a higher hseq and a valid MAC. */
@@ -265,7 +267,7 @@ export class Store {
 
   /** Finish queued work, then forget the keys. */
   async close() {
-    while (this.#running) await this.#running;
+    await this.#queue.idle();
     this.#closed = true;
     this.#wipe();
   }
@@ -281,38 +283,8 @@ export class Store {
     if (this.#broken) fail('STORE_BROKEN', 'A save failed. Open the vault again.');
   }
 
-  #op(fn) { this.#usable(); return this.#enqueue('op', fn); }
-  #task(fn) { this.#usable(); return this.#enqueue('task', fn); }
-
-  #enqueue(kind, fn) {
-    return new Promise((resolve, reject) => {
-      this.#q.push({ kind, fn, resolve, reject });
-      if (!this.#running) this.#running = this.#drain();
-    });
-  }
-
-  async #drain() {
-    try {
-      await new Promise((r) => setImmediate(r)); // writes of the same moment join one commit
-      while (this.#q.length) {
-        if (this.#q[0].kind === 'task') {
-          const t = this.#q.shift();
-          try {
-            this.#usable();
-            t.resolve(await t.fn());
-          } catch (e) {
-            t.reject(e);
-          }
-        } else {
-          const batch = [];
-          while (this.#q.length && this.#q[0].kind === 'op') batch.push(this.#q.shift());
-          await this.#commit(batch);
-        }
-      }
-    } finally {
-      this.#running = null;
-    }
-  }
+  #op(fn) { this.#usable(); return this.#queue.op(fn); }
+  #task(fn) { this.#usable(); return this.#queue.task(fn); }
 
   async #commit(batch) {
     try {
