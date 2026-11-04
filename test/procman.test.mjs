@@ -30,7 +30,7 @@ before(async () => {
     fixed: { 'app.json': { id: 'fixed', name: 'Fixed', engine: 'static', port: 47100 }, 'index.html': 'f' },
   });
   const { engines } = await loadEngines();
-  pm = new ProcessManager({ engines, appsDir: fx.appsDir, dataDir: fx.dataDir, portRange: RANGE, startTimeoutMs: 1500 });
+  pm = new ProcessManager({ engines, appsDir: fx.appsDir, dataDir: fx.dataDir, portRange: RANGE, startTimeoutMs: 6000 });
   await pm.reload();
 });
 after(async () => { await pm.stopAll(); await fx.cleanup(); });

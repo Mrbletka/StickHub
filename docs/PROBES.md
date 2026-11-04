@@ -103,3 +103,16 @@ Hub stopped first (worst case: the watcher has to start it). Times from pressing
 | hub stopped -> "Hub is not running" page | yes |
 
 The rest of the 6.6 s is the mount (~1 s after USB), the 2 s poll, and the page loading and redeeming its login code.
+
+## Run 5 - 2026-11-04: probe 8, app data on the stick (code 60397ec)
+| Step | Result |
+|---|---|
+| Enter -> page open and logged in | 17.6 s, but the watcher found the stick only at the end of that; stick found -> page open: 1.2 s (hub already running) |
+| note written in the Notebook | landed on the stick (data/notebook/vault/Facet.md) |
+| pull -> hub saw it | 0.35 s after the mount vanished |
+| apps stopped | 45 ms; the hub kept running; "Stick removed" shown |
+| plug back -> data on the stick again | 0.8 s; the pull was reported; apps not restarted by themselves |
+
+The 17.6 s is mostly the time before the stick was mounted and seen (probe 1 measured about 1 s from USB to mount,
+plus up to 2 s polling), so it needs a re-run to tell. Test fix: procman test start timeout 1.5 s -> 6 s (the phone is
+slower under load: "nothing answered on port 47101 in time").
