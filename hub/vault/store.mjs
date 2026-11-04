@@ -170,9 +170,12 @@ export class Store {
     return this.#task(() => verifyReplica({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, kId: this.#keys.contentId, quick: !!o.quick }));
   }
 
-  /** A new store on the same folder with the same data key (no KDF): sees what another process wrote meanwhile. */
+  /**
+   * A new store on the same folder with the same data key (no KDF): sees what another process wrote meanwhile, and is
+   * the way out after a failed save (this instance stays broken). Only a closed (locked) store refuses.
+   */
   reopen() {
-    this.#usable();
+    if (this.#closed) fail('CLOSED', 'The vault is locked.');
     const dk = Buffer.from(this.#dk);
     return openVaultFolder(this.#dir, async (h) => { verifyHeaderMac(h, dk); return dk; }, this.#opts);
   }
@@ -312,6 +315,7 @@ export class Store {
 
   /** Commit a changed draft: packs (random names, fsync), then the index (.part, fsync, rename). Throws on failure. */
   async #commitDraft(d, now) {
+    if (this.#indexFiles >= this.#limits.indexFiles) await this.#cleanup(); // one try; blocked or busy = no change
     if (this.#indexFiles >= this.#limits.indexFiles) {
       fail('NEEDS_REPAIR', 'The vault cannot save any more: a damaged file stops the cleanup. Run "vault verify", then "vault export" to save your notes.');
     }
@@ -340,15 +344,14 @@ export class Store {
 
   async #maintain() {
     const needsCleanup = () => this.#indexFiles > 2 || this.#dirty;
-    const out = await maintainStore(this.#inner(), () => this.#inner(), needsCleanup, () => this.#cleanup());
-    if (out.cleanup) this.#dirty = false;
-    return out;
+    return maintainStore(this.#inner(), () => this.#inner(), needsCleanup, () => this.#cleanup());
   }
 
   async #cleanup() {
     if (this.#reads) return { done: false, level: 'none', reasons: ['reads in progress'] };
     const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
     this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons };
+    if (r.done && r.level === 'full') this.#dirty = false; // only a full cleanup finishes header leftovers
     this.#indexFiles = r.indexFiles;
     this.#sinceCleanup = 0;
     return r;

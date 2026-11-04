@@ -3,7 +3,7 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { readdirSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { openVaultFolder } from '../hub/vault/store.mjs';
@@ -54,17 +54,69 @@ test('a damaged index file and 300 saves: still opens, few index files, packs un
   assert.equal((await s2.read('n/note19.md')).toString(), 'version 299');
 });
 
-test('at the index-file limit new commits are refused with NEEDS_REPAIR; reads keep working', async () => {
+test('at the index-file limit a commit first runs one cleanup, then goes on', async () => {
   const t = await fresh({ limits: { indexFiles: 6 }, autoCleanupEvery: 0 });
   const s = t.store;
   for (let i = 0; indexFiles(t) < 6; i++) await s.write('n/a.md', `v${i}`);
+  await s.write('n/b.md', 'b'); // at the limit: the cleanup runs inside the commit
+  assert.equal(s.status().lastCleanup.level, 'full');
+  assert.ok(indexFiles(t) <= 3, `${indexFiles(t)} index files`);
+  assert.equal((await s.read('n/b.md')).toString(), 'b');
+});
+
+test('at the index-file limit with the cleanup blocked or busy: NEEDS_REPAIR; reads keep working', async () => {
+  const t = await fresh({ limits: { indexFiles: 6 }, autoCleanupEvery: 0 });
+  const s = t.store;
+  for (let i = 0; indexFiles(t) < 6; i++) await s.write('n/a.md', `v${i}`);
+  // busy: a read is running, so the cleanup does nothing
+  const it = s.readChunks('n/a.md');
+  await it.next();
   await assert.rejects(s.write('n/b.md', 'b'), (e) => e.code === 'NEEDS_REPAIR' && /vault verify/.test(e.message) && /vault export/.test(e.message));
   assert.equal(s.status().broken, false);
+  assert.equal(s.status().lastCleanup, null, 'no cleanup ran');
+  await it.return();
+  // blocked: another writer moved the newest index on, so this store's cleanup must not touch anything
+  const other = await open(t, { autoCleanupEvery: 0 });
+  await other.write('n/c.md', 'c');
+  await assert.rejects(s.write('n/b.md', 'b'), { code: 'NEEDS_REPAIR' });
+  assert.equal(s.status().lastCleanup.level, 'none');
   assert.ok((await s.read('n/a.md')).length > 0, 'reads still work');
-  const r = await s.cleanup(); // the count is taken again after a cleanup
-  assert.equal(r.level, 'full');
-  assert.equal(s.status().indexFiles, 2);
-  await s.write('n/b.md', 'b');
+});
+
+test('reopen() works on a broken store; the broken one stays broken; a closed one refuses', async () => {
+  let fail = false;
+  const t = await fresh({ autoCleanupEvery: 0, guard: (op) => { if (fail && op === 'rename') throw Object.assign(new Error('pulled'), { code: 'EIO' }); } });
+  const s = t.store;
+  await s.write('n/a.md', 'kept');
+  fail = true;
+  await assert.rejects(s.write('n/b.md', 'lost'), { code: 'WRITE_FAILED' });
+  fail = false;
+  assert.equal(s.status().broken, true);
+  const s2 = await s.reopen();
+  assert.equal((await s2.read('n/a.md')).toString(), 'kept');
+  assert.throws(() => s2.stat('n/b.md'), { code: 'NOT_FOUND' });
+  await s2.write('n/b.md', 'saved now');
+  await assert.rejects(async () => s.write('n/x.md', 'x'), { code: 'STORE_BROKEN' });
+  await s2.close();
+  assert.throws(() => s2.reopen(), { code: 'CLOSED' });
+});
+
+test('an unfinished header write is redone by the next FULL cleanup, not lost to a busy one', async () => {
+  const t = await fresh({ autoCleanupEvery: 0 });
+  await t.store.write('n/a.md', 'a');
+  await t.store.close();
+  rmSync(join(t.dir, 'vault.bak.json')); // as if pulled before the backup copy was written
+  const s = await open(t, { autoCleanupEvery: 0 });
+  assert.equal(indexFiles(t), 2, 'only the header leftover is left to do');
+  const it = s.readChunks('n/a.md');
+  await it.next();
+  assert.equal((await s.maintain()).cleanup.reasons[0], 'reads in progress');
+  await it.return();
+  const r = await s.maintain(); // still marked: the cleanup runs now and writes the backup copy
+  assert.equal(r.cleanup.level, 'full');
+  assert.equal(r.cleanup.removed.headerBackup, true);
+  assert.ok(existsSync(join(t.dir, 'vault.bak.json')));
+  assert.deepEqual(await s.maintain(), { purged: 0, compacted: null, cleanup: null }, 'now nothing is left to do');
 });
 
 test('the counter starts from the disk: a folder with many leftovers gets a cleanup after the first commit', async () => {
