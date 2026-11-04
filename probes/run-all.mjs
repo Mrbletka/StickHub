@@ -1,5 +1,5 @@
 // Runs the phone probes, saves the result in probes/out/ (git-ignored) and copies it to the clipboard.
-// Usage: node probes/run-all.mjs [--only 0,3,4,5] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
+// Usage: node probes/run-all.mjs [--only 0,3,4,5,6] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
 
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -11,6 +11,7 @@ import { runIn as p4 } from './p4-speed.mjs';
 import { run3 } from './p3-usb-poll.mjs';
 import { run2 } from './p2-open-url.mjs';
 import { run1 } from './p1-replug.mjs';
+import { run6 } from './p6-sync.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -62,6 +63,7 @@ async function main() {
   await step(r, 3, opts, () => run3(r, opts));
   await step(r, 2, opts, () => run2(r));
   await step(r, 1, opts, () => run1(r));
+  await step(r, 6, opts, () => run6(r));
 
   const outDir = join(here, 'out');
   mkdirSync(outDir, { recursive: true });
@@ -72,6 +74,8 @@ async function main() {
     const res = await run('termux-clipboard-set', [], { timeout: 10_000, input: r.toString() });
     console.log(res.ok ? 'Copied to the clipboard. Paste it into the chat.' : `Clipboard failed (${res.error}). Run: termux-clipboard-set < ${file}`);
   }
+  // A probe may leave a stuck file operation behind (e.g. a pulled stick): do not wait for it.
+  process.exit(0);
 }
 
 main().catch((e) => { console.error(e.stack || String(e)); process.exitCode = 1; });
