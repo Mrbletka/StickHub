@@ -120,7 +120,8 @@ Code and data are separate groups. `sync plan` (dry run) first, then `sync run`.
 
 ## Watcher (phone only, hub/watcher.mjs, runs in Termux)
 - Poll `/proc/self/mountinfo` every ~2 s (0.7 ms per read). `termux-usb -l` is too heavy to poll (1.2 s per call).
-  On a new /storage/<uuid> mount: look for <mount>/HUB/stick.json. `termux-setup-storage` only if probe 1 shows it is needed.
+  On a new /storage/<uuid> mount: look for <mount>/HUB/stick.json. The stick is writable about 1 s after the USB device
+  appears, with no `termux-setup-storage` (measured; it also pops up a screen). Run it only once, at install.
 - Found: start the hub if it is not running, sync data, open `termux-open-url http://127.0.0.1:8787/?t=<token>`.
   Stick removed: stop writing, finish or roll back the journal, update status.
 - Run under `termux-wake-lock`. CLI: `hub watch start|stop|status`.

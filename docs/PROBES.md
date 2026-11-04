@@ -47,7 +47,7 @@ instead of re-hashing the whole stick on each sync.
 - `termux-usb -l`: 1.16 s per call (wall), 50 ms CPU in Termux plus work in the Termux:API app.
   Every 3 s that is busy 39% of the time: too heavy.
 - Reading `/proc/self/mountinfo`: 0.7 ms. Checking the `~/storage` links: 1.7 ms.
-- Plan: the watcher polls mountinfo (cheap) and uses `termux-usb` only as a hint, if at all. Depends on probe 1 (re-run).
+- Decision: the watcher polls mountinfo, not `termux-usb` (see run 2).
 
 ### 2. Opening the browser
 - Foreground: page opened after 2.0 s. **Background (Termux not in front): Chrome opened by itself after 1.5 s.**
@@ -59,4 +59,17 @@ instead of re-hashing the whole stick on each sync.
 - What it did show: after unplug the `external-1` link stays but points nowhere; `termux-setup-storage` then
   removes it, and it showed something on screen (you answered "y"). Its question ("rebuild ~/storage?") is
   answered by sending `y` on stdin.
-- Fixed probe: re-run with `sh probes/run-all.sh --only 1`.
+- Fixed probe: see run 2 below.
+
+## Run 2 - 2026-11-04: probe 1 (unplug and re-plug), fixed probe
+Times are ms after the prompt, so they include how fast you moved.
+- Unplug: mount gone from mountinfo and root unreadable at 2840 ms; `termux-usb -l` empty at 3481 ms.
+  The `external-1` link stays but points nowhere.
+- Re-plug: USB device seen at 7047 ms (slow loop, ~1.2 s steps), mounted at 7969 ms, root readable 8024 ms,
+  root writable 8104 ms, old link works again 8120 ms. So about 1 s from USB to a writable stick.
+- **Without `termux-setup-storage` everything works again**: same mount path, root writable, old link fine.
+- `termux-setup-storage` takes 1.1 s and shows something on screen. Not needed for the stick.
+
+### Decision
+The watcher reads `/proc/self/mountinfo` every ~2 s, finds `/storage/<uuid>` mounts and checks `HUB/stick.json`.
+No `termux-usb` polling, no `termux-setup-storage` (only once, at install, for storage permission).
