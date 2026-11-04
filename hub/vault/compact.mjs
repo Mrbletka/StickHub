@@ -7,12 +7,16 @@
 //   pack of a higher tier, so a byte moves about once per tier and a merged pack waits until its own tier is full.
 //   Worth it with a full tier, at least 4 mostly dead packs, or at least 4 MiB of dead bytes in them. Cheapest packs
 //   first, up to maxBytes of live bytes and maxPacks packs per call (one call is one step of maintain()).
-// - gatherPieces: reads every affected file whole through the normal checked path (content id checked at the end),
-//   keeps the bytes of the pieces that move, and stops between files when the signal is aborted.
+// - gatherPieces (job 2c): opens each chosen pack once and reads only the pieces that move, in order, so each segment
+//   is decrypted at most once and segments without a moving piece are not read. Every segment is authenticated
+//   (AES-GCM, STREAM); every moving piece must be listed in its pack's table of contents under its content id, offset
+//   and length; when every piece of a file moves, the file's content id (HMAC) is checked too. A file that only partly
+//   moves is not read whole any more, so its content id is not checked here (verify does). Stops between packs when
+//   the signal is aborted.
 
+import { createHmac } from 'node:crypto';
 import { fail } from './errors.mjs';
-import { usage } from './indexfile.mjs';
-import { readChunks } from './store-read.mjs';
+import { usage, readPackToc } from './indexfile.mjs';
 import { packPieces } from './packs.mjs';
 import { Draft } from './store-ops.mjs';
 
@@ -82,21 +86,38 @@ export function planCompaction(state, o = {}) {
  * @returns {Promise<{key: string, id: string, part: number, data: Buffer, path: string}[]>}
  */
 export async function gatherPieces(state, chosen, pr, kId, signal) {
-  const affected = new Map(); // content id -> {e, path}: one entry per content (dedupe)
-  const add = (e, path) => { if (e.kind === 'f' && !affected.has(e.id) && e.x.some(([n]) => chosen.has(n))) affected.set(e.id, { e, path }); };
+  const pieces = new Map(); // "pack:offset:length" -> piece (a piece shared by several files moves once)
+  const whole = new Map(); // content id -> extents, for files whose every piece moves
+  const add = (e, path) => {
+    if (e.kind !== 'f' || !e.x.some(([n]) => chosen.has(n))) return;
+    e.x.forEach(([pack, off, len], part) => {
+      const key = `${pack}:${off}:${len}`;
+      if (chosen.has(pack) && !pieces.has(key)) pieces.set(key, { key, id: e.id, part, path, pack, off, len, data: null });
+    });
+    if (e.x.every(([n]) => chosen.has(n))) whole.set(e.id, e.x);
+  };
   for (const [p, e] of state.files) add(e, p);
   for (const t of state.trash) add(t, t.path);
-  const pieces = new Map();
-  for (const [id, { e, path }] of affected) {
-    if (signal?.aborted) fail('CANCELLED', 'Compaction was stopped.');
-    const parts = e.x.map(() => []);
-    for await (const c of readChunks(pr, e, kId)) if (chosen.has(e.x[c.extent][0])) parts[c.extent].push(c.data);
-    e.x.forEach(([n, off, len], i) => {
-      const key = `${n}:${off}:${len}`;
-      if (chosen.has(n) && !pieces.has(key)) pieces.set(key, { key, id, part: i, data: Buffer.concat(parts[i]), path });
-    });
+  const byPack = new Map();
+  for (const p of pieces.values()) {
+    if (!byPack.has(p.pack)) byPack.set(p.pack, []);
+    byPack.get(p.pack).push(p);
   }
-  return [...pieces.values()];
+  for (const [pack, list] of byPack) {
+    if (signal?.aborted) fail('CANCELLED', 'Compaction was stopped.');
+    list.sort((a, b) => a.off - b.off);
+    await pr.withPack(pack, async (r) => {
+      for (const p of list) p.data = await r.read(p.off, p.len); // in order: each segment once
+      const toc = new Set((await readPackToc(r)).map((b) => `${b.id}:${b.off}:${b.len}`));
+      for (const p of list) if (!toc.has(`${p.id}:${p.off}:${p.len}`)) fail('BAD_VX', 'A pack does not hold what the index says.');
+    }, Infinity);
+  }
+  for (const [id, x] of whole) {
+    const h = createHmac('sha256', kId);
+    for (const [pack, off, len] of x) h.update(pieces.get(`${pack}:${off}:${len}`).data);
+    if (h.digest('base64url') !== id) fail('BAD_VX', 'A file in the vault does not match its content id.');
+  }
+  return [...pieces.values()].map(({ key, id, part, data, path }) => ({ key, id, part, data, path }));
 }
 
 /**

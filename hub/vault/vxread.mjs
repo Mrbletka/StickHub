@@ -19,9 +19,10 @@ export const readerStats = { segments: 0 };
  * @param {{size: number, read: (pos: number, len: number) => Promise<Buffer>}} src
  * @param {{kFile: Buffer, vaultId: Buffer, epoch: number}} ctx
  * @param {{kind: 'pack'|'index', fileId: Buffer}} f
+ * @param {number} [keep]  decrypted segments kept (default 8; Infinity: each segment is decrypted at most once)
  * @returns {Promise<{length: number, read: (off: number, len: number) => Promise<Buffer>, close: () => void}>}
  */
-export async function openVxReader(src, ctx, f) {
+export async function openVxReader(src, ctx, f, keep = CACHE) {
   if (src.size > vxSize(MAX_PAYLOAD[f.kind])) fail('TOO_BIG', 'The vault file is bigger than allowed.');
   if (src.size < HEAD + MIN_PADDED + TAG) fail('BAD_VX', 'The vault file is too short.');
   const head = vxHeaderBytes(f.kind);
@@ -38,7 +39,7 @@ export async function openVxReader(src, ctx, f) {
     const last = i === n - 1;
     const plain = decryptSegment(key, i, last, head, await src.read(HEAD + i * FULL_SEGMENT, last ? lastLen : FULL_SEGMENT));
     readerStats.segments++;
-    if (cache.size >= CACHE) {
+    if (cache.size >= keep) {
       const [oldest] = cache.keys();
       zero(cache.get(oldest));
       cache.delete(oldest);

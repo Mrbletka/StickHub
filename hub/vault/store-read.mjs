@@ -26,14 +26,8 @@ export class PackReader {
    * Bytes [off, off + len) of a pack's payload. tocCheck {id, off, len}: the piece must be in the table of contents.
    * @returns {Promise<Buffer>}
    */
-  async read(pack, off, len, tocCheck = null) {
-    const f = await this.#vfs.openRead(join(this.#dir, PACK_DIR, `${pack}.vx`)).catch((err) => {
-      if (err.code === 'ENOENT') fail('PACK_MISSING', 'A pack file of the vault is missing.');
-      throw err;
-    });
-    let r = null;
-    try {
-      r = await openVxReader(f, this.#ctx, { kind: 'pack', fileId: parseVxFileName(`${pack}.vx`) });
+  read(pack, off, len, tocCheck = null) {
+    return this.withPack(pack, async (r) => {
       if (tocCheck) {
         let toc = this.#tocs.get(pack);
         if (!toc) {
@@ -43,7 +37,25 @@ export class PackReader {
         }
         if (!toc.some((b) => b.id === tocCheck.id && b.off === tocCheck.off && b.len === tocCheck.len)) fail('BAD_VX', 'A pack does not hold what the index says.');
       }
-      return await r.read(off, len);
+      return r.read(off, len);
+    });
+  }
+
+  /**
+   * Open one pack and run fn with its range reader (every segment authenticated before use), then close it.
+   * @param {string} pack
+   * @param {(r: {length: number, read: Function}) => Promise<any>} fn
+   * @param {number} [keep]  segments the reader keeps (Infinity: each segment is decrypted at most once)
+   */
+  async withPack(pack, fn, keep) {
+    const f = await this.#vfs.openRead(join(this.#dir, PACK_DIR, `${pack}.vx`)).catch((err) => {
+      if (err.code === 'ENOENT') fail('PACK_MISSING', 'A pack file of the vault is missing.');
+      throw err;
+    });
+    let r = null;
+    try {
+      r = await openVxReader(f, this.#ctx, { kind: 'pack', fileId: parseVxFileName(`${pack}.vx`) }, keep);
+      return await fn(r);
     } finally {
       r?.close();
       await f.close();
