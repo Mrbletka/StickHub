@@ -3,8 +3,8 @@
 //   a due trash purge (one commit), one compaction call (one commit), or one capped cleanup run.
 // The caller queues the next step only after this one finished, so saves that arrived meanwhile go first.
 // A chain ends when nothing is left, when a cleanup run is blocked, busy (reads in progress) or fails, or when the
-// store is closing. It never spins: compaction steps go on only while the number of candidates or their dead bytes
-// goes down; cleanup steps do at most as much work as the chain's first cleanup run saw (saves that arrive all the
+// store is closing. It never spins: compaction steps go on only while the number of packs in use or the dead bytes
+// go down; cleanup steps do at most as much work as the chain's first cleanup run saw (saves that arrive all the
 // time make new leftovers: the next maintenance takes them); and a chain stops after MAX_STEPS steps.
 
 import { planCompaction } from './compact.mjs';
@@ -85,7 +85,7 @@ export async function step(chain, io) {
   }
   if (chain.phase === 'compact') {
     const plan = io.problems().length ? null : planCompaction(io.state());
-    const progress = plan && (!chain.lastPlan || plan.candidates < chain.lastPlan.candidates || plan.dead < chain.lastPlan.dead);
+    const progress = plan && (!chain.lastPlan || plan.livePacks < chain.lastPlan.livePacks || plan.dead < chain.lastPlan.dead);
     if (progress) {
       chain.lastPlan = plan;
       const r = await io.compact();

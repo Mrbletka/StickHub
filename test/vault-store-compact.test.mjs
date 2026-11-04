@@ -69,7 +69,7 @@ test('compaction keeps dedupe: two files with the same content share one moved p
   const same = randomBytes(200_000);
   await s.write('d/one.bin', same);
   await s.write('d/two.bin', same);
-  for (let i = 0; i < 4; i++) await s.write(`d/small${i}`, `small ${i}`);
+  for (let i = 0; i < 3; i++) await s.write(`d/other${i}`, randomBytes(100_000)); // 4 packs of one size tier
   const r = await s.compact();
   assert.equal(r.done, true, JSON.stringify(r));
   assert.equal(s.status().packs, 1);

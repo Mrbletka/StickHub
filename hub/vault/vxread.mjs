@@ -11,6 +11,9 @@ import {
 
 const CACHE = 8; // segments kept per reader
 
+/** Segments decrypted by range readers so far (tests and probes count compaction reads with it). */
+export const readerStats = { segments: 0 };
+
 /**
  * Open a reader over an open .vx file.
  * @param {{size: number, read: (pos: number, len: number) => Promise<Buffer>}} src
@@ -34,6 +37,7 @@ export async function openVxReader(src, ctx, f) {
     if (cache.has(i)) return cache.get(i);
     const last = i === n - 1;
     const plain = decryptSegment(key, i, last, head, await src.read(HEAD + i * FULL_SEGMENT, last ? lastLen : FULL_SEGMENT));
+    readerStats.segments++;
     if (cache.size >= CACHE) {
       const [oldest] = cache.keys();
       zero(cache.get(oldest));

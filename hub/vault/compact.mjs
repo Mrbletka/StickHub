@@ -1,9 +1,12 @@
 // Compaction (design 8.6): move the live pieces of small or mostly dead packs into new packs of about 8 MiB, so the
 // vault does not end up with thousands of tiny packs. The store runs it inside its write queue, one commit per call;
 // the old packs stay until a later full cleanup removes them (they are kept while the previous index uses them).
-// - planCompaction: candidates = packs whose live bytes are under 50% of their size, and live packs under 1 MiB.
-//   Worth it only with at least 4 candidates, or at least 4 MiB of dead bytes in them. Cheapest packs first, up to
-//   maxBytes of live bytes and maxPacks packs read per call (job 2b: one call is one step of maintain()).
+// - planCompaction (size tiers, job 2c): a pack under 50% live is a candidate any time (that frees dead space). A
+//   mostly live pack under 1 MiB is in a size tier by its live bytes: tier 0 under 4 KiB, then x4 per tier (16 KiB,
+//   64 KiB, 256 KiB, 1 MiB). Only a tier with at least 4 packs is merged, lowest tier first; 4 packs of a tier make a
+//   pack of a higher tier, so a byte moves about once per tier and a merged pack waits until its own tier is full.
+//   Worth it with a full tier, at least 4 mostly dead packs, or at least 4 MiB of dead bytes in them. Cheapest packs
+//   first, up to maxBytes of live bytes and maxPacks packs per call (one call is one step of maintain()).
 // - gatherPieces: reads every affected file whole through the normal checked path (content id checked at the end),
 //   keeps the bytes of the pieces that move, and stops between files when the signal is aborted.
 
@@ -17,27 +20,47 @@ import { Draft } from './store-ops.mjs';
 export const TRASH_DAYS_MS = 30 * 24 * 3600 * 1000;
 
 export const COMPACT = Object.freeze({ maxBytes: 16 * 1024 * 1024, maxPacks: 12, target: 8 * 1024 * 1024,
-  small: 1024 * 1024, deadShare: 0.5, minCandidates: 4, minDead: 4 * 1024 * 1024 });
+  small: 1024 * 1024, tierBase: 4 * 1024, tierFactor: 4, deadShare: 0.5, minCandidates: 4, minDead: 4 * 1024 * 1024 });
+
+/** Size tier of a mostly live pack by its live bytes: 0 under 4 KiB, 1 under 16 KiB, ... 4 under 1 MiB. */
+export function tierOf(live) {
+  let t = 0;
+  for (let b = COMPACT.tierBase; live >= b && b < COMPACT.small; b *= COMPACT.tierFactor) t++;
+  return t;
+}
 
 /**
  * Which packs to compact now, or null when it is not worth it.
  * @param {{files: Map, trash: object[], packSizes: Map<string, number>}} state
  * @param {{maxBytes?: number, maxPacks?: number}} [o]  per call: live bytes moved, packs read
- * @returns {{packs: Set<string>, liveBytes: number, candidates: number, dead: number}|null}  candidates, dead: for the
- *   progress check of stepped maintenance (maintain.mjs)
+ * @returns {{packs: Set<string>, liveBytes: number, livePacks: number, dead: number}|null}  livePacks (packs in use),
+ *   dead (dead bytes in mostly dead packs): for the progress check of stepped maintenance (maintain.mjs)
  */
 export function planCompaction(state, o = {}) {
   const maxBytes = o.maxBytes ?? COMPACT.maxBytes;
   const maxPacks = o.maxPacks ?? COMPACT.maxPacks;
   if (![maxBytes, maxPacks].every((n) => Number.isSafeInteger(n) && n >= 1)) fail('BAD_INPUT', 'compact: maxBytes and maxPacks must be whole numbers from 1');
   const live = usage(state.files, state.trash);
-  const cand = [];
+  const mostlyDead = [];
+  const tiers = new Map();
   let dead = 0;
+  let livePacks = 0;
   for (const [name, size] of state.packSizes) {
     const l = live.get(name) || 0;
-    if (l > 0 && (l < size * COMPACT.deadShare || size < COMPACT.small)) { cand.push([name, l]); dead += size - l; }
+    if (!l) continue;
+    livePacks++;
+    if (l < size * COMPACT.deadShare) {
+      mostlyDead.push([name, l]);
+      dead += size - l;
+    } else if (l < COMPACT.small) {
+      const t = tierOf(l);
+      if (!tiers.has(t)) tiers.set(t, []);
+      tiers.get(t).push([name, l]);
+    }
   }
-  if (cand.length < COMPACT.minCandidates && dead < COMPACT.minDead) return null;
+  const full = [...tiers.keys()].sort((a, b) => a - b).find((t) => tiers.get(t).length >= COMPACT.minCandidates);
+  if (full === undefined && mostlyDead.length < COMPACT.minCandidates && dead < COMPACT.minDead) return null;
+  const cand = [...mostlyDead, ...(full === undefined ? [] : tiers.get(full))];
   cand.sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
   const packs = new Set();
   let liveBytes = 0;
@@ -46,7 +69,7 @@ export function planCompaction(state, o = {}) {
     packs.add(name);
     liveBytes += l;
   }
-  return packs.size >= 2 || dead >= COMPACT.minDead ? { packs, liveBytes, candidates: cand.length, dead } : null;
+  return packs.size >= 2 || dead >= COMPACT.minDead ? { packs, liveBytes, livePacks, dead } : null;
 }
 
 /**
