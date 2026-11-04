@@ -68,6 +68,7 @@ export class Draft {
     const cur = this.files.get(f.path);
     if (cur?.kind === 'd') fail('IS_DIR', 'That is a folder.');
     if (ifMatch !== undefined && (ifMatch === null ? cur !== undefined : cur?.id !== ifMatch)) fail('CONFLICT', 'It was changed meanwhile.');
+    if (cur && cur.id === f.id) return { id: f.id, size: f.size }; // same content: nothing to commit, mtime kept
     if (!cur) this.#checkCase(f.path);
     const missing = this.#missingParents(f.path);
     this.#room(missing.length + 1);

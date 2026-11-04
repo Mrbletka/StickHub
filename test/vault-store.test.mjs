@@ -63,6 +63,10 @@ test('dedupe: the same content is stored once', async () => {
   assert.equal(count(t, '_packs'), packs);
   assert.deepEqual(await t.store.read('c/4'), data);
   assert.equal(t.store.stat('a/1').id, t.store.stat('c/4').id);
+  const s2 = await reopen(t); // a shared piece counts once in the pack's live bytes, so the index decodes
+  assert.deepEqual(s2.status().problems, []);
+  assert.equal(s2.status().seq, t.store.status().seq);
+  assert.deepEqual(await s2.read('b/3'), data);
 });
 
 test('folders: mkdir, tree, move with contents, and the errors', async () => {

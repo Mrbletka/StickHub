@@ -213,8 +213,11 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - v1 step 2, part 1 (store core, API, range reads, limits, cleanup in hub/vault/): **Done: 56e54c0** (tests only;
   not wired into the hub; all 190 tests pass on the phone 2026-11-04). Next: the rest of step 2 (`vault export`, `vault verify`, compaction, the store probe).
 - Store rules: a .vx file is never changed in place; index files are committed by rename; the newest index that
-  decrypts wins; cleanup and compaction run only inside the store's write queue and never when any index file or a
-  header copy fails; file times are never used.
+  decrypts wins; every new index is decoded once before it is written. Cleanup runs only inside the store's write
+  queue, at two levels: FULL (packs too) only when nothing is damaged; LIGHT (index .part files and valid index files
+  beyond the 2 newest, never packs, damaged files or headers) when an index file or a header copy is damaged; none
+  at all when the order of the indexes is unclear. Compaction never runs while there are problems. At 200 files in
+  _index commits are refused (NEEDS_REPAIR). File times are never used.
 - Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,
   passphrases or paper codes; a VaultError message never contains an input value (test/vault-nosecrets.test.mjs).
   zero() keys when done. KDF settings and everything else read from a stick are checked before any KDF runs.

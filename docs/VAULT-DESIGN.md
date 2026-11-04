@@ -526,6 +526,12 @@ the stick is plugged in.
 - Runs when unlocked and idle (and at lock, if quick), inside the hub's write queue, one pack at a time, cancellable.
 - Merges small packs and packs with mostly dead data into packs of about 8 MiB; drops trash older than 30 days.
 - Removes `.vx` files no index refers to (leftovers of a pull or crash) and old index files beyond the 2 newest.
+- Two levels (job 2 part 2, C1). **Full** does all of the above, only when nothing is damaged. **Light** runs when an
+  index file or a header copy is damaged: it removes only index `.part` files and valid index files beyond the 2
+  newest valid ones, never packs, damaged files or headers, so index files cannot pile up until open fails. Neither
+  runs when the order is unclear (the newest index on disk is not the store's, two share a number, replicas mixed).
+- At 200 files in `_index` new commits are refused (`NEEDS_REPAIR`: run `vault verify`, then `vault export`); reads,
+  verify and export keep working. Open refuses more than 256.
 - Pulled out mid-compaction: the new pack is garbage, the old packs are still referenced. Nothing is lost.
 
 ## 9. Speed: plug-in to open in 10 s or less
@@ -671,12 +677,21 @@ Deviations and choices, with the reason:
    torn `.vx` index that looks exactly like damage, and the safety rule would then stop every later cleanup. Packs
    keep the no-`.part` write. Cost: one rename more per commit on the stick (to be measured by the store probe).
 2. The pack's table of contents is at the end, not the start: the blob offsets are then known before it is written.
-3. Cleanup refuses when **any** index file is damaged, not only "the newest": an unreadable file has no readable
-   number, so nobody can prove it is older. It also re-reads and MAC-checks both header copies when it runs.
-4. Open never writes. Leftovers (`.part` files, an unfinished header copy) are removed by cleanup, which the store
-   also queues by itself every 16 commits: open reads every index file (at most 256), so they must not pile up.
-5. A store with problems (damaged index, header copy) still opens, reads and writes; only cleanup is refused, and
-   `status().problems` says why. Repair is a later tool.
+3. Full cleanup refuses when **any** index file is damaged, not only "the newest": an unreadable file has no
+   readable number, so nobody can prove it is older. It also re-reads and MAC-checks both header copies when it runs.
+   Since part 2 (C1) a **light** cleanup still removes index files then (8.6), so one damaged file cannot make the
+   folder fill up.
+4. Open never writes. Leftovers are removed by cleanup, which the store queues by itself; the counter starts from what
+   is on the disk at open (index files beyond the 2 newest, plus `.part` files), because Termux can end a session
+   at any time (C1: 26 short sessions used to make open fail).
+5. A store with problems (damaged index, header copy) still opens, reads and writes; full cleanup and compaction are
+   refused and `status().problems` says why (each reason once). At 200 index files commits stop (`NEEDS_REPAIR`).
+   Repair is a later tool.
+10. Found in part 2: a piece shared by several files (dedupe) was counted once per file in the pack's live bytes,
+   so such an index failed its own check on the next open. Fixed (each piece counts once); every new index is now
+   decoded and compared before it is written, and that check is what found it. A path such as `__proto__` was lost
+   from the index (C2); writing the content a file already has no longer makes a commit (C3); folder listings stop
+   after the limit + 1 names (C4).
 6. Writing a file creates its missing parent folders. Names that differ only in case are refused (exFAT, Windows,
    export). Paths follow `relOk` (120 characters per name, 240 per path, depth 16).
 7. Part reads check the piece against the pack's table of contents; whole reads check the content id (HMAC).

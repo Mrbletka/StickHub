@@ -140,10 +140,19 @@ export function decodeIndex(payload, expect) {
   return { seq, replica: j.replica, time, files, trash, packSizes, peers: j.peers, devices: j.devices };
 }
 
-/** Live bytes per pack, from the extents of files and trash. */
+/** Live bytes per pack, from the extents of files and trash. A piece shared by several files (dedupe) counts once. */
 export function usage(files, trash) {
   const live = new Map();
-  const add = (e) => { if (e.kind === 'f') for (const [n, , len] of e.x) live.set(n, (live.get(n) || 0) + len); };
+  const seen = new Set();
+  const add = (e) => {
+    if (e.kind !== 'f') return;
+    for (const [n, off, len] of e.x) {
+      const key = `${n}:${off}:${len}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      live.set(n, (live.get(n) || 0) + len);
+    }
+  };
   for (const e of files.values()) add(e);
   for (const e of trash) add(e);
   return live;
@@ -163,8 +172,8 @@ export function encodeIndex(s, ctx) {
     packs[name] = { size: s.packSizes.get(name), live: bytes };
   }
   const out = (e) => (e.kind === 'd' ? { kind: 'd', mtime: e.mtime } : { kind: 'f', id: e.id, size: e.size, mtime: e.mtime, x: e.x });
-  const files = {};
-  for (const p of [...s.files.keys()].sort()) files[p] = out(s.files.get(p));
+  // Object.fromEntries defines own properties: a path like "__proto__" stays an ordinary key (files[p] = ... would not)
+  const files = Object.fromEntries([...s.files.keys()].sort().map((p) => [p, out(s.files.get(p))]));
   const trash = s.trash.map((t) => ({ tid: t.tid, path: t.path, ...out(t), deletedAt: t.deletedAt }));
   const j = { v: 1, vault: toB64u(ctx.vaultId), replica: s.replica, epoch: ctx.epoch, seq: s.seq, time: s.time, files, trash, packs, peers: s.peers, devices: s.devices };
   return deflateRawSync(Buffer.from(JSON.stringify(j)));

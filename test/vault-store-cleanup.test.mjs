@@ -83,43 +83,78 @@ test('cleanup removes leftovers and keeps everything the 2 newest indexes use', 
   assert.equal((await s.read('n/f/c.md')).toString(), 'sea');
 });
 
-test('cleanup does nothing when an index file is damaged (at open or later)', async () => {
+const untouched = (dir) => listing(dir).filter((n) => !n.startsWith('_index/')); // packs and headers (incl. .part)
+
+test('a damaged index file: only the light cleanup runs; packs, the damaged file and the headers stay', async () => {
   const t = await messyVault();
+  const seq = t.store.status().seq;
+  const damage = (n) => { const b = readFileSync(join(t.dir, '_index', n)); b[b.length - 5] ^= 1; writeFileSync(join(t.dir, '_index', n), b); return b; };
   const names = readdirSync(join(t.dir, '_index')).filter((n) => n.endsWith('.vx'));
-  const victim = join(t.dir, '_index', names[0]);
-  const saved = readFileSync(victim);
-  const bad = Buffer.from(saved);
-  bad[bad.length - 5] ^= 1;
-  writeFileSync(victim, bad);
-  const before = listing(t.dir);
+  // the newest one damaged: the store's own newest is gone, so no cleanup at all
+  let newest = null;
+  for (const n of names) {
+    const saved = readFileSync(join(t.dir, '_index', n));
+    damage(n);
+    if ((await open(t.dir, t.v)).status().seq !== seq) newest = n;
+    writeFileSync(join(t.dir, '_index', n), saved);
+  }
+  damage(newest);
+  assert.equal((await t.store.cleanup()).level, 'none');
+  writeFileSync(join(t.dir, '_index', newest), (b => { b[b.length - 5] ^= 1; return b; })(readFileSync(join(t.dir, '_index', newest))));
+  // an older one damaged: the light cleanup runs
+  const victim = names.find((n) => n !== newest);
+  damage(victim);
+  const keep = untouched(t.dir);
   const r1 = await t.store.cleanup(); // damaged after the store opened
-  assert.equal(r1.done, false);
-  assert.ok(r1.reasons.includes('damaged index file'));
+  assert.equal(r1.level, 'light');
+  assert.deepEqual(r1.reasons, ['damaged index file'], 'each reason once');
+  assert.equal(r1.removed.packs, 0);
+  assert.deepEqual(untouched(t.dir), keep, 'packs and headers untouched');
+  const idx = readdirSync(join(t.dir, '_index'));
+  assert.ok(idx.includes(victim), 'the damaged file stays');
+  assert.equal(idx.filter((n) => n.endsWith('.part')).length, 0, 'index .part files removed');
+  assert.ok(idx.length <= 3, `${idx.length} index files`);
   const s2 = await open(t.dir, t.v); // damaged at open
   assert.deepEqual(s2.status().problems, ['damaged index file']);
-  assert.equal((await s2.cleanup()).done, false);
-  assert.deepEqual(listing(t.dir), before, 'nothing touched');
-  writeFileSync(victim, saved);
+  const r2 = await s2.cleanup();
+  assert.equal(r2.level, 'light');
+  assert.deepEqual(r2.reasons, ['damaged index file'], 'once, though found at open and again now');
+  assert.deepEqual(untouched(t.dir), keep);
 });
 
-test('cleanup does nothing when a header copy fails its check', async () => {
+test('a header copy that fails its check: only the light cleanup runs; packs and headers stay', async () => {
   const t = await messyVault();
   const main = join(t.dir, 'vault.json');
   const text = readFileSync(main, 'utf8');
   const flipMac = (x) => x.replace(/"mac":"(.)/, (_, c) => `"mac":"${c === 'A' ? 'B' : 'A'}`);
   for (const [file, broken] of [[main, flipMac(text)], [join(t.dir, 'vault.bak.json'), '{"not":"a header"}']]) {
-    const keep = readFileSync(file, 'utf8');
+    const saved = readFileSync(file, 'utf8');
     writeFileSync(file, broken);
-    const before = listing(t.dir);
+    const keep = untouched(t.dir);
     const r = await t.store.cleanup(); // checked when cleanup runs, not only at open
-    assert.equal(r.done, false, file);
-    assert.deepEqual(listing(t.dir), before);
+    assert.equal(r.level, 'light', file);
+    assert.equal(r.reasons.length, 1);
+    assert.deepEqual(untouched(t.dir), keep);
     const s = await open(t.dir, t.v);
     assert.equal(s.status().problems.length, 1);
-    assert.equal((await s.cleanup()).done, false);
-    writeFileSync(file, keep);
+    assert.equal((await s.cleanup()).level, 'light');
+    assert.deepEqual(untouched(t.dir), keep);
+    writeFileSync(file, saved);
   }
-  assert.equal((await (await open(t.dir, t.v)).cleanup()).done, true);
+  const r = await (await open(t.dir, t.v)).cleanup();
+  assert.equal(r.level, 'full');
+  assert.deepEqual(r.reasons, []);
+});
+
+test('no cleanup at all when the newest index on disk is not the one the store knows', async () => {
+  const t = await fresh();
+  await t.store.write('n/a', 'a');
+  const other = await open(t.dir, t.v);
+  await other.write('n/b', 'b'); // another writer moved on
+  const before = listing(t.dir);
+  const r = await t.store.cleanup();
+  assert.equal(r.level, 'none');
+  assert.deepEqual(listing(t.dir), before);
 });
 
 test('a cleanup runs by itself every 16 commits, so index files cannot pile up', async () => {

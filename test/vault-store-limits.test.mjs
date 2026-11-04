@@ -141,5 +141,5 @@ test('a missing pack file is reported as damage, not a crash', async () => {
   const t = await fresh();
   await t.store.write('a/x', 'x');
   for (const n of readdirSync(join(t.dir, '_packs'))) rmSync(join(t.dir, '_packs', n));
-  await assert.rejects(t.store.read('a/x'), { code: 'BAD_VX' });
+  await assert.rejects(t.store.read('a/x'), { code: 'PACK_MISSING' });
 });

@@ -3,33 +3,31 @@
 // - Writes go through one queue. Writes that arrive together share one commit: new pack(s) under random names
 //   (fsync), then a new index (seq + 1) as .part, fsync, rename. A .vx file is never changed in place.
 // - A failed write marks the store broken: only a fresh open shows what is on disk.
-// - Cleanup runs in the queue and does nothing at all if any index file is damaged, a header copy failed, or the
-//   newest index on disk is not the one this store knows. It keeps every pack the 2 newest indexes use.
+// - Cleanup runs in the queue (cleanup.mjs): full when nothing is damaged, light (index files only) when something is.
+//   At 200 files in _index new commits are refused (NEEDS_REPAIR); reads keep working.
 // No logging. Errors are VaultErrors whose messages never contain a path or a name from the vault.
 
 import { createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import { fail, ioError as failedWrite } from './errors.mjs';
+import { VaultError, fail, ioError as failedWrite } from './errors.mjs';
 import { zero } from './bytes.mjs';
 import { subkeys } from './keys.mjs';
 import { parseHeader, verifyHeaderMac } from './header.mjs';
-import { parseVxFileName } from './vx.mjs';
 import { buildPacks } from './packs.mjs';
-import { openVxReader } from './vxread.mjs';
-import { encodeIndex, readPackToc, usage, INDEX_LIMITS } from './indexfile.mjs';
+import { PackReader, readRange } from './store-read.mjs';
+import { encodeIndex, decodeIndex, usage, INDEX_LIMITS } from './indexfile.mjs';
 import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createReplica, PACK_DIR } from './replica.mjs';
 import { runCleanup } from './cleanup.mjs';
 import { createVfs } from './vfs.mjs';
 import { Draft, checkPath } from './store-ops.mjs';
 
-const TOC_CACHE = 32;
-export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexBytes: 16 * 1024 * 1024, fileBytes: INDEX_LIMITS.fileBytes });
-
+/** indexFiles: at this many files in _index new commits are refused (NEEDS_REPAIR); open refuses above 256. */
+export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexBytes: 16 * 1024 * 1024, fileBytes: INDEX_LIMITS.fileBytes, indexFiles: 200 });
 
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #q = []; #running = null; #reads = 0;
-  #tocs = new Map(); #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null;
+  #packs; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0;
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -71,12 +69,16 @@ export class Store {
     s.#autoEvery = o.autoCleanupEvery ?? 16;
     s.#keys = subkeys(s.#dk, o.header.vaultId, o.header.epoch);
     s.#ctx = { kFile: s.#keys.file, vaultId: o.header.vaultId, epoch: o.header.epoch };
+    s.#packs = new PackReader(dir, s.#vfs, s.#ctx);
     try {
       const scan = await scanIndexes(dir, s.#ctx, s.#vfs);
       if (!scan.valid.length) fail(scan.damaged.length ? 'BAD_INDEX' : 'NO_INDEX', 'The vault has no readable index.');
       s.#current = { name: scan.valid[0].name, seq: scan.valid[0].seq };
       s.#state = scan.valid[0].state;
       s.#problems = scanProblems(scan);
+      s.#indexFiles = scan.count;
+      // leftovers count toward the next cleanup: a folder near the limit gets one soon after the first commit
+      s.#sinceCleanup = Math.max(0, scan.valid.length - 2) + scan.parts.length;
       if (s.#headerInfo.problem) s.#problems.push(s.#headerInfo.problem);
     } catch (e) {
       s.#wipe();
@@ -89,7 +91,7 @@ export class Store {
   status() {
     return { seq: this.#state.seq, files: this.#state.files.size, trash: this.#state.trash.length,
       header: this.#headerInfo.used, problems: [...this.#problems], broken: this.#broken, closed: this.#closed,
-      lastCleanup: this.#lastCleanup };
+      lastCleanup: this.#lastCleanup, indexFiles: this.#indexFiles, packs: this.#state.packSizes.size };
   }
 
   // ---- reading (the committed state; no queue) ----
@@ -141,48 +143,11 @@ export class Store {
     const start = range.start ?? 0;
     const end = range.end ?? e.size;
     if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > e.size) fail('BAD_INPUT', 'Bad range.');
-    const whole = start === 0 && end === e.size;
     this.#reads++;
     try {
-      const parts = [];
-      let pos = 0;
-      for (const [pack, off, len] of e.x) {
-        const a = Math.max(start, pos);
-        const b = Math.min(end, pos + len);
-        if (b > a) parts.push(await this.#readPack(pack, off + (a - pos), b - a, whole ? null : { id: e.id, off, len }));
-        pos += len;
-      }
-      const data = Buffer.concat(parts);
-      if (whole && createHmac('sha256', this.#keys.contentId).update(data).digest('base64url') !== e.id) {
-        fail('BAD_VX', 'A file in the vault does not match its content id.');
-      }
-      return data;
+      return await readRange(this.#packs, e, start, end, this.#keys.contentId);
     } finally {
       this.#reads--;
-    }
-  }
-
-  async #readPack(pack, off, len, tocCheck) {
-    const f = await this.#vfs.openRead(join(this.#dir, PACK_DIR, `${pack}.vx`)).catch((err) => {
-      if (err.code === 'ENOENT') fail('BAD_VX', 'A pack file of the vault is missing.');
-      throw err;
-    });
-    let r = null;
-    try {
-      r = await openVxReader(f, this.#ctx, { kind: 'pack', fileId: parseVxFileName(`${pack}.vx`) });
-      if (tocCheck) {
-        let toc = this.#tocs.get(pack);
-        if (!toc) {
-          toc = await readPackToc(r);
-          if (this.#tocs.size >= TOC_CACHE) this.#tocs.delete(this.#tocs.keys().next().value);
-          this.#tocs.set(pack, toc);
-        }
-        if (!toc.some((b) => b.id === tocCheck.id && b.off === tocCheck.off && b.len === tocCheck.len)) fail('BAD_VX', 'A pack does not hold what the index says.');
-      }
-      return await r.read(off, len);
-    } finally {
-      r?.close();
-      await f.close();
     }
   }
 
@@ -264,7 +229,7 @@ export class Store {
   #wipe() {
     zero(this.#dk, this.#keys?.header, this.#keys?.contentId, this.#keys?.file);
     this.#state = { seq: 0, files: new Map(), trash: [], packSizes: new Map() };
-    this.#tocs.clear();
+    this.#packs?.clear();
   }
 
   #usable() {
@@ -312,6 +277,11 @@ export class Store {
       for (const it of batch) it.reject(e);
       return;
     }
+    if (this.#indexFiles >= this.#limits.indexFiles) {
+      const err = new VaultError('NEEDS_REPAIR', 'The vault cannot save any more: a damaged file stops the cleanup. Run "vault verify", then "vault export" to save your notes.');
+      for (const it of batch) it.reject(err);
+      return;
+    }
     const d = new Draft(this.#state);
     const now = this.#now();
     const ok = [];
@@ -339,6 +309,7 @@ export class Store {
       return;
     }
     this.#current = { name, seq: prep.next.seq };
+    this.#indexFiles++;
     this.#state = prep.next;
     for (const [it, r] of ok) it.resolve(r);
     this.#maybeAutoCleanup();
@@ -357,13 +328,19 @@ export class Store {
     const next = { ...this.#state, seq: this.#state.seq + 1, time: now, files, trash, packSizes };
     const payload = encodeIndex(next, this.#ctx);
     if (payload.length > this.#limits.indexBytes) fail('TOO_BIG', 'The vault index would be bigger than 16 MiB.');
+    let back = null; // never write an index this code cannot read back
+    try { back = decodeIndex(payload, this.#ctx); } catch { back = null; }
+    if (!back || back.seq !== next.seq || back.files.size !== files.size || back.trash.length !== trash.length) {
+      fail('INTERNAL', 'The vault index could not be built (a bug). Nothing was saved.');
+    }
     return { next, packs, payload };
   }
 
   async #cleanup() {
     if (this.#reads) return { done: false, reasons: ['reads in progress'] };
     const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
-    this.#lastCleanup = r.done ? { done: true } : { done: false, reasons: r.reasons };
+    this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons };
+    this.#indexFiles = r.indexFiles;
     this.#sinceCleanup = 0;
     return r;
   }

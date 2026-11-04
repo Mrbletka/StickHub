@@ -104,8 +104,8 @@ export async function writeHeaderFiles(dir, text, vfs) {
  * @param {string} dir
  * @param {{kFile: Buffer, vaultId: Buffer, epoch: number}} ctx
  * @param {ReturnType<import('./vfs.mjs').createVfs>} vfs
- * @returns {Promise<{valid: {name: string, seq: number, state: object}[], damaged: string[], parts: string[]}>}
- *   valid sorted newest first; parts = leftover <id>.vx.part files
+ * @returns {Promise<{valid: {name: string, seq: number, state: object}[], damaged: string[], parts: string[], count: number}>}
+ *   valid sorted newest first; parts = leftover <id>.vx.part files; count = all files in _index
  */
 export async function scanIndexes(dir, ctx, vfs) {
   const names = await vfs.list(join(dir, INDEX_DIR), MAX_INDEX_FILES);
@@ -126,7 +126,7 @@ export async function scanIndexes(dir, ctx, vfs) {
     }
   }
   valid.sort((a, b) => b.seq - a.seq || (a.name < b.name ? 1 : -1));
-  return { valid, damaged, parts };
+  return { valid, damaged, parts, count: names.length };
 }
 
 /**
@@ -135,8 +135,12 @@ export async function scanIndexes(dir, ctx, vfs) {
  * @returns {string[]}
  */
 export function scanProblems(scan) {
+  return [...(scan.damaged.length ? ['damaged index file'] : []), ...orderProblems(scan)];
+}
+
+/** Problems that make even the light cleanup unsafe: the order of the index files is not clear. */
+export function orderProblems(scan) {
   const p = [];
-  if (scan.damaged.length) p.push('damaged index file');
   if (scan.valid[1] && scan.valid[1].seq === scan.valid[0].seq) p.push('two index files with the same number');
   if (new Set(scan.valid.map((v) => v.state.replica)).size > 1) p.push('index files of different replicas');
   return p;

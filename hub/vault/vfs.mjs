@@ -1,7 +1,7 @@
 // Guarded file operations for the vault store. Every write-type step calls guard(op, path) first, so tests can
 // simulate the stick being pulled at any step (the same idea as hub/sync/fsx.mjs). Never uses file times.
 
-import { open, rename, unlink, readdir, mkdir } from 'node:fs/promises';
+import { open, rename, unlink, opendir, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { fail } from './errors.mjs';
 
@@ -78,14 +78,18 @@ export function createVfs(opts = {}) {
    * @param {number} max
    */
   async function list(dir, max) {
-    let names;
+    let d;
     try {
-      names = await readdir(dir);
+      d = await opendir(dir);
     } catch (e) {
       if (e.code === 'ENOENT') return [];
       throw e;
     }
-    if (names.length > max) fail('TOO_BIG', 'A vault folder has too many files.');
+    const names = [];
+    for await (const ent of d) { // reads entries a few at a time; leaving the loop closes the folder
+      names.push(ent.name);
+      if (names.length > max) fail('TOO_BIG', 'A vault folder has too many files.');
+    }
     return names;
   }
 
