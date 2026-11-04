@@ -16,7 +16,7 @@ import { makeTestStore } from './vault-helpers.mjs';
 const roots = [];
 after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'stickhub-unplug-')); roots.push(d); return d; };
-async function fresh() { const t = await makeTestStore(); roots.push(t.root); return t; }
+async function fresh(o) { const t = await makeTestStore(o); roots.push(t.root); return t; }
 const open = (dir, v, guard) => openVaultFolder(dir, (h) => unlockWithPassphrase(h, v.passphrase), { guard, autoCleanupEvery: 0 });
 
 /** Everything a user could see: files with content, folders, trash. */
@@ -44,7 +44,7 @@ async function assertTidy(dir, v) {
 
 /** A vault with history: overwrites, a move, a folder in the trash, an orphan pack and .part leftovers. */
 async function messyVault() {
-  const t = await fresh();
+  const t = await fresh({ autoCleanupEvery: 0 }); // no automatic steps: the test cleans everything itself
   const s = t.store;
   await s.write('n/a.md', 'first');
   await s.write('n/a.md', 'second');
@@ -245,7 +245,7 @@ test('unplug at every step of a header write', async () => {
 });
 
 test('unplug at every step of a compaction', async () => {
-  const t = await fresh();
+  const t = await fresh({ autoCleanupEvery: 0 }); // the automatic steps would compact first
   for (let i = 0; i < 6; i++) await t.store.write(`n/c${i}.md`, `compact me ${i}`);
   const steps = await unplugAtEveryStep(t, async (s) => {
     const r = await s.compact();

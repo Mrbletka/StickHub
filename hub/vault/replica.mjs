@@ -94,6 +94,18 @@ export async function checkHeaderCopies(dir, dk, vaultId, vfs) {
   }
 }
 
+/**
+ * Check a header text that should replace `current`: it parses, passes the MAC with dk, is for the same vault and
+ * epoch, and has a higher hseq. Throws BAD_HEADER, BAD_MAC or BAD_INPUT otherwise.
+ * @returns {object} the parsed header
+ */
+export function checkNewerHeader(text, current, dk) {
+  const h = parseHeader(text);
+  verifyHeaderMac(h, dk);
+  if (!h.vaultId.equals(current.vaultId) || h.epoch !== current.epoch || h.hseq <= current.hseq) fail('BAD_INPUT', 'Not a newer header of this vault.');
+  return h;
+}
+
 /** Write both header copies: main first, then the backup (each .part, fsync, rename). */
 export async function writeHeaderFiles(dir, text, vfs) {
   await vfs.writeAtomic(join(dir, HEADER_MAIN), text);

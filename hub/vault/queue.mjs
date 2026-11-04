@@ -3,7 +3,8 @@
 //   commit). Before the first item runs, the queue waits one tick (setImmediate), so changes made in the same moment
 //   join the same batch.
 // - 'task' items (cleanup, compaction, verify, header writes) run alone; check() runs before each one (closed/broken).
-// - background(fn, onError) queues a task nobody waits for (automatic maintenance).
+// - background(fn, onError) queues a task nobody waits for (automatic maintenance); dropBackground() removes the
+//   background tasks that have not started (close() does that: they are dropped, not run).
 
 export class WriteQueue {
   #q = [];
@@ -28,8 +29,15 @@ export class WriteQueue {
 
   /** Queue a task nobody waits for; its error goes to onError. */
   background(fn, onError) {
-    this.#q.push({ kind: 'task', fn, resolve: () => {}, reject: onError });
+    this.#q.push({ kind: 'task', fn, resolve: () => {}, reject: onError, background: true });
     if (!this.#running) this.#running = this.#drain();
+  }
+
+  /** Remove the background tasks that have not started yet. @returns {number} how many */
+  dropBackground() {
+    const before = this.#q.length;
+    this.#q = this.#q.filter((it) => !it.background);
+    return before - this.#q.length;
   }
 
   /** Resolves when everything queued so far (and anything queued meanwhile) has run. */

@@ -23,7 +23,8 @@ export const COMPACT = Object.freeze({ maxBytes: 16 * 1024 * 1024, target: 8 * 1
  * Which packs to compact now, or null when it is not worth it.
  * @param {{files: Map, trash: object[], packSizes: Map<string, number>}} state
  * @param {{maxBytes?: number}} [o]
- * @returns {{packs: Set<string>, liveBytes: number}|null}
+ * @returns {{packs: Set<string>, liveBytes: number, candidates: number, dead: number}|null}  candidates, dead: for the
+ *   progress check of stepped maintenance (maintain.mjs)
  */
 export function planCompaction(state, o = {}) {
   const maxBytes = o.maxBytes ?? COMPACT.maxBytes;
@@ -43,7 +44,7 @@ export function planCompaction(state, o = {}) {
     packs.add(name);
     liveBytes += l;
   }
-  return packs.size >= 2 || dead >= COMPACT.minDead ? { packs, liveBytes } : null;
+  return packs.size >= 2 || dead >= COMPACT.minDead ? { packs, liveBytes, candidates: cand.length, dead } : null;
 }
 
 /**
@@ -99,25 +100,4 @@ export async function compactStore(s) {
   d.extraSizes = built.sizes;
   await s.commit(d, s.now);
   return { done: true, packs: plan.packs.size, newPacks: built.packs.length, bytes: plan.liveBytes };
-}
-
-/**
- * maintain(): purge trash older than 30 days, compact if worth it, then clean up if there is anything to remove.
- * Nothing to do = no I/O.
- * @param {object} s  as for compactStore (taken again after each commit: fresh())
- * @param {() => object} fresh
- * @param {() => boolean} needsCleanup
- * @param {() => Promise<object>} cleanup
- */
-export async function maintainStore(s, fresh, needsCleanup, cleanup) {
-  const out = { purged: 0, compacted: null, cleanup: null };
-  if (s.state.trash.some((t) => t.deletedAt < s.now - TRASH_DAYS_MS)) {
-    const d = new Draft(s.state);
-    out.purged = d.purgeTrash(s.now - TRASH_DAYS_MS).removed;
-    await s.commit(d, s.now);
-  }
-  const now = fresh();
-  if (!now.problems.length && planCompaction(now.state)) out.compacted = await compactStore(now);
-  if (needsCleanup()) out.cleanup = await cleanup();
-  return out;
 }

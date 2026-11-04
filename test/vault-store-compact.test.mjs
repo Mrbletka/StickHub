@@ -109,7 +109,9 @@ test('a read started before the compaction commit still works', async () => {
   const first = await it.next();
   const c = await s.compact();
   assert.equal(c.done, true);
-  assert.deepEqual(await s.cleanup(), { done: false, level: 'none', reasons: ['reads in progress'] }); // waits for the reads
+  const busy = await s.cleanup(); // busy: deletes nothing, ends the chain
+  assert.deepEqual({ ...busy, removed: undefined }, { done: false, level: 'none', reasons: ['reads in progress'], removed: undefined, indexFiles: 3, more: false, left: 0, steps: 1 });
+  assert.deepEqual(Object.values(busy.removed), [0, 0, 0, 0, false]);
   const rest = [first.value];
   for await (const chunk of it) rest.push(chunk);
   assert.deepEqual(Buffer.concat(rest), big);
@@ -136,6 +138,6 @@ test('no compaction while there are problems; cancelled = nothing written; nothi
   await u.store.close();
   let writes = 0;
   const s3 = await open(u, { autoCleanupEvery: 0, guard: () => { writes++; } });
-  assert.deepEqual(await s3.maintain(), { purged: 0, compacted: null, cleanup: null });
+  assert.deepEqual(await s3.maintain(), { purged: 0, compacted: null, cleanup: null, steps: 0 });
   assert.equal(writes, 0);
 });

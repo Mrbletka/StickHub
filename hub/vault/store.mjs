@@ -3,22 +3,24 @@
 // - Writes go through one queue. Writes that arrive together share one commit: new pack(s) under random names
 //   (fsync), then a new index (seq + 1) as .part, fsync, rename. A .vx file is never changed in place.
 // - A failed write marks the store broken: only a fresh open shows what is on disk.
-// - Cleanup (cleanup.mjs: full, or light when something is damaged), compaction and maintain() (compact.mjs) run in
-//   the queue. At 200 files in _index commits are refused (NEEDS_REPAIR). No logging; errors never name a vault path.
+// - Cleanup (cleanup.mjs: full, or light when something is damaged), compaction (compact.mjs) and maintain() run in
+//   the queue in small steps (maintain.mjs), so a save waits for one step at most. At 200 files in _index commits are
+//   refused (NEEDS_REPAIR) after one capped cleanup run. No logging; errors never name a vault path.
 
 import { createHmac, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { fail, ioError as failedWrite } from './errors.mjs';
 import { zero } from './bytes.mjs';
 import { subkeys } from './keys.mjs';
-import { parseHeader, verifyHeaderMac } from './header.mjs';
+import { verifyHeaderMac } from './header.mjs';
 import { prepareCommit } from './packs.mjs';
-import { compactStore, maintainStore, TRASH_DAYS_MS } from './compact.mjs';
+import { compactStore, TRASH_DAYS_MS } from './compact.mjs';
+import { Maintenance } from './maintain.mjs';
 import { PackReader, readRange, readChunks } from './store-read.mjs';
 import { verifyReplica } from './verify.mjs';
 import { INDEX_LIMITS } from './indexfile.mjs';
-import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, unlockReplica, createVault, PACK_DIR } from './replica.mjs';
-import { runCleanup } from './cleanup.mjs';
+import { scanIndexes, scanProblems, writeIndexPayload, writeHeaderFiles, checkNewerHeader, unlockReplica, createVault, PACK_DIR } from './replica.mjs';
+import { runCleanup, noRemovals, CLEANUP_MAX } from './cleanup.mjs';
 import { createVfs } from './vfs.mjs';
 import { Draft, checkPath } from './store-ops.mjs';
 import { WriteQueue } from './queue.mjs';
@@ -29,7 +31,8 @@ export const STORE_LIMITS = Object.freeze({ packs: INDEX_LIMITS.packs, indexByte
 export class Store {
   #dir; #vfs; #dk; #keys; #ctx; #header; #headerText; #headerInfo; #random; #now; #limits;
   #state; #current; #problems = []; #broken = false; #closed = false; #queue; #reads = 0;
-  #packs; #opts; #autoEvery = 16; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0; #maintained = false; #dirty = false;
+  #packs; #opts; #autoEvery = 4; #sinceCleanup = 0; #lastCleanup = null; #indexFiles = 0; #maintained = false; #dirty = false;
+  #closing = false; #maint; #cleanupMax = CLEANUP_MAX;
 
   /**
    * Create a new, empty vault in dir and open it. dir must not hold a vault yet.
@@ -45,8 +48,9 @@ export class Store {
    * Open a replica with a data key and its checked header (see openVaultFolder for the usual way in).
    * @param {string} dir
    * @param {{dk: Buffer, header: object, headerText: string, headerInfo?: object, guard?: Function,
-   *   random?: Function, now?: () => number, limits?: object, autoCleanupEvery?: number}} o  limits: tests only;
-   *   autoCleanupEvery: queue a cleanup after this many commits (default 16, 0 = never), so index files cannot pile up
+   *   random?: Function, now?: () => number, limits?: object, autoCleanupEvery?: number, cleanupMax?: number}} o
+   *   limits: tests only; autoCleanupEvery: automatic maintenance after the first commit and then every this many
+   *   commits (default 4, 0 = never); cleanupMax: files one cleanup run may delete (default 10)
    */
   static async open(dir, o) {
     verifyHeaderMac(o.header, o.dk);
@@ -60,12 +64,14 @@ export class Store {
     s.#random = o.random || randomBytes;
     s.#now = o.now || Date.now;
     s.#limits = { ...STORE_LIMITS, ...o.limits };
-    s.#autoEvery = o.autoCleanupEvery ?? 16;
-    s.#opts = { guard: o.guard, random: o.random, now: o.now, limits: o.limits, autoCleanupEvery: o.autoCleanupEvery };
+    s.#autoEvery = o.autoCleanupEvery ?? 4;
+    s.#cleanupMax = o.cleanupMax ?? CLEANUP_MAX;
+    s.#opts = { guard: o.guard, random: o.random, now: o.now, limits: o.limits, autoCleanupEvery: o.autoCleanupEvery, cleanupMax: o.cleanupMax };
     s.#keys = subkeys(s.#dk, o.header.vaultId, o.header.epoch);
     s.#ctx = { kFile: s.#keys.file, vaultId: o.header.vaultId, epoch: o.header.epoch };
     s.#packs = new PackReader(dir, s.#vfs, s.#ctx);
     s.#queue = new WriteQueue({ check: () => s.#usable(), runBatch: (batch) => s.#commit(batch) });
+    s.#maint = new Maintenance(s.#queue, () => s.#io(), (e) => { s.#lastCleanup = { done: false, error: e.code || 'ERROR' }; });
     try {
       const scan = await scanIndexes(dir, s.#ctx, s.#vfs);
       if (!scan.valid.length) fail(scan.damaged.length ? 'BAD_INDEX' : 'NO_INDEX', 'The vault has no readable index.');
@@ -88,7 +94,7 @@ export class Store {
   status() {
     return { seq: this.#state.seq, files: this.#state.files.size, trash: this.#state.trash.length,
       header: this.#headerInfo.used, problems: [...this.#problems], broken: this.#broken, closed: this.#closed,
-      lastCleanup: this.#lastCleanup, indexFiles: this.#indexFiles, packs: this.#state.packSizes.size };
+      lastCleanup: this.#lastCleanup, indexFiles: this.#indexFiles, packs: this.#state.packSizes.size, maintaining: this.#maint.active };
   }
 
   // ---- reading (the committed state; no queue) ----
@@ -228,33 +234,37 @@ export class Store {
   /** Remove trash entries older than 30 days (store clock). */
   purgeTrash() { return this.#op((d, now) => d.purgeTrash(now - TRASH_DAYS_MS)); }
 
-  /** Remove leftovers (cleanup.mjs: full or light). */
-  cleanup() { return this.#task(() => this.#cleanup()); }
+  /**
+   * Remove leftovers (cleanup.mjs: full or light) in capped runs, each its own step in the write queue, until nothing
+   * is left or a run is blocked or busy. One merged result: counts summed, plus `steps`.
+   */
+  cleanup() { this.#usable(); return this.#maint.run('cleanup'); }
 
   /**
    * Move the live pieces of small or mostly dead packs into new ~8 MiB packs: one commit (compact.mjs). Not while there
    * are problems. Stops between files when the signal is aborted (nothing written then).
    * @param {{maxBytes?: number, signal?: AbortSignal}} [o]
    */
-  compact(o = {}) { return this.#task(() => this.#compact(o)); }
+  compact(o = {}) { return this.#task(() => compactStore(this.#inner(o))); }
 
-  /** Purge old trash, compact if worth it, then clean up. Nothing to do = no I/O. */
-  maintain() { return this.#task(() => this.#maintain()); }
+  /**
+   * Purge old trash, compact while worth it, then clean up: in steps (maintain.mjs), each its own item in the write
+   * queue, so saves go first. Nothing to do = no I/O. @returns {Promise<{purged, compacted, cleanup, steps}>}
+   */
+  maintain() { this.#usable(); return this.#maint.run('maintain'); }
 
-  /** After the first commit of a session and then every `autoCleanupEvery` commits, queue maintain(). */
+  /** After the first commit of a session and then every `autoCleanupEvery` commits: one automatic chain. */
   #maybeMaintain() {
-    if (!this.#autoEvery || (this.#maintained && ++this.#sinceCleanup < this.#autoEvery)) return;
+    if (!this.#autoEvery || this.#closing || (this.#maintained && ++this.#sinceCleanup < this.#autoEvery)) return;
     this.#maintained = true;
     this.#sinceCleanup = 0;
-    this.#queue.background(() => this.#maintain(), (e) => { this.#lastCleanup = { done: false, error: e.code || 'ERROR' }; });
+    this.#maint.auto(); // one automatic chain at a time; none while maintain() or cleanup() runs
   }
 
   /** Replace the header (both copies). It must be for this vault and epoch, with a higher hseq and a valid MAC. */
   writeHeader(text) {
     return this.#task(async () => {
-      const h = parseHeader(text);
-      verifyHeaderMac(h, this.#dk);
-      if (!h.vaultId.equals(this.#header.vaultId) || h.epoch !== this.#header.epoch || h.hseq <= this.#header.hseq) fail('BAD_INPUT', 'Not a newer header of this vault.');
+      const h = checkNewerHeader(text, this.#header, this.#dk);
       try {
         await writeHeaderFiles(this.#dir, text, this.#vfs);
       } catch (e) {
@@ -268,8 +278,13 @@ export class Store {
     });
   }
 
-  /** Finish queued work, then forget the keys. */
+  /**
+   * Wait for the running step and for everything callers queued (saves, explicit tasks); automatic steps that have
+   * not started are dropped and maintenance chains stop after their current step. Then forget the keys.
+   */
   async close() {
+    this.#closing = true;
+    this.#queue.dropBackground();
     await this.#queue.idle();
     this.#closed = true;
     this.#wipe();
@@ -315,7 +330,7 @@ export class Store {
 
   /** Commit a changed draft: packs (random names, fsync), then the index (.part, fsync, rename). Throws on failure. */
   async #commitDraft(d, now) {
-    if (this.#indexFiles >= this.#limits.indexFiles) await this.#cleanup(); // one try; blocked or busy = no change
+    if (this.#indexFiles >= this.#limits.indexFiles) await this.#cleanupRun(); // one capped run; blocked or busy = no change
     if (this.#indexFiles >= this.#limits.indexFiles) {
       fail('NEEDS_REPAIR', 'The vault cannot save any more: a damaged file stops the cleanup. Run "vault verify", then "vault export" to save your notes.');
     }
@@ -340,18 +355,27 @@ export class Store {
       random: this.#random, now: this.#now(), signal: o.signal, maxBytes: o.maxBytes, commit: (d, now) => this.#commitDraft(d, now) };
   }
 
-  #compact(o) { return compactStore(this.#inner(o)); }
-
-  async #maintain() {
-    const needsCleanup = () => this.#indexFiles > 2 || this.#dirty;
-    return maintainStore(this.#inner(), () => this.#inner(), needsCleanup, () => this.#cleanup());
+  /** What a maintenance step needs from the store (maintain.mjs). */
+  #io() {
+    return {
+      closing: () => this.#closing, state: () => this.#state, problems: () => this.#problems,
+      purgeDue: () => this.#state.trash.some((t) => t.deletedAt < this.#now() - TRASH_DAYS_MS),
+      purge: async () => {
+        const now = this.#now(), d = new Draft(this.#state), { removed } = d.purgeTrash(now - TRASH_DAYS_MS);
+        await this.#commitDraft(d, now);
+        return removed;
+      },
+      compact: () => compactStore(this.#inner()), cleanupRun: () => this.#cleanupRun(),
+      needsCleanup: () => this.#indexFiles > 2 || this.#dirty,
+    };
   }
 
-  async #cleanup() {
-    if (this.#reads) return { done: false, level: 'none', reasons: ['reads in progress'] };
-    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems });
-    this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons };
-    if (r.done && r.level === 'full') this.#dirty = false; // only a full cleanup finishes header leftovers
+  /** One capped cleanup run (cleanup.mjs). */
+  async #cleanupRun() {
+    if (this.#reads) return { done: false, level: 'none', reasons: ['reads in progress'], removed: noRemovals(), indexFiles: this.#indexFiles, more: false, left: 0 };
+    const r = await runCleanup({ dir: this.#dir, vfs: this.#vfs, ctx: this.#ctx, dk: this.#dk, current: this.#current.name, problems: this.#problems, max: this.#cleanupMax });
+    this.#lastCleanup = { done: r.done, level: r.level, reasons: r.reasons, more: r.more };
+    if (r.done && r.level === 'full' && !r.more) this.#dirty = false; // the header backup is the last thing a run does
     this.#indexFiles = r.indexFiles;
     this.#sinceCleanup = 0;
     return r;

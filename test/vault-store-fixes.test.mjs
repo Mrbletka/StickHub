@@ -116,7 +116,7 @@ test('an unfinished header write is redone by the next FULL cleanup, not lost to
   assert.equal(r.cleanup.level, 'full');
   assert.equal(r.cleanup.removed.headerBackup, true);
   assert.ok(existsSync(join(t.dir, 'vault.bak.json')));
-  assert.deepEqual(await s.maintain(), { purged: 0, compacted: null, cleanup: null }, 'now nothing is left to do');
+  assert.deepEqual(await s.maintain(), { purged: 0, compacted: null, cleanup: null, steps: 0 }, 'now nothing is left to do');
 });
 
 test('the counter starts from the disk: a folder with many leftovers gets a cleanup after the first commit', async () => {
@@ -126,8 +126,10 @@ test('the counter starts from the disk: a folder with many leftovers gets a clea
   assert.equal(indexFiles(t), 21);
   const s = await open(t);
   await s.write('n/a.md', 'one more');
-  await s.close();
+  assert.equal(s.status().maintaining, true, 'the first commit started the automatic steps');
+  while (s.status().maintaining) await new Promise((r) => setImmediate(r)); // close() would drop the steps not started
   assert.ok(indexFiles(t) <= 3, `${indexFiles(t)} index files`);
+  await s.close();
 });
 
 test('top-level paths "__proto__", "constructor" and "toString" survive a close and an open', async () => {
