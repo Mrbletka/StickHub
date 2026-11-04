@@ -291,13 +291,15 @@ plaintext of all segments = length (4 bytes) + payload + zero padding up to max(
 - The key comes from the name, so renaming or swapping files makes them fail to decrypt. A cut-short file fails
   (no segment marked "last"); extra bytes after the last segment are refused.
 - Reading part of a big file decrypts only the 64 KiB segments it needs.
-- **Pack** payload: a table of contents (deflated JSON: for each blob its content id, offset, length, and a hint of
-  path and time, used only by a repair tool if every index is lost) followed by the blobs. A pack is at most 32 MiB;
-  a bigger file spans several packs.
+- **Pack** payload: the blobs, then a table of contents (deflated JSON: for each blob piece its content id, part,
+  offset, length, and a hint of path and time, used by part reads and by a repair tool if every index is lost), then
+  the table's length (4 bytes). A pack is at most 32 MiB (31 MiB of blobs); a bigger file spans several packs.
 - **Index** payload: deflated JSON (section 6.4). Compressing the index before encryption is fine here: nobody can
   inject chosen text into it and watch sizes.
-- A `.vx` file is written once and never changed. It is written directly under its final random name (no `.part`):
-  until an index points to it, it does not exist for the vault. Unreferenced files are removed by the cleanup (8.6).
+- A `.vx` file is written once and never changed. A **pack** is written directly under its final random name (no
+  `.part`): until an index points to it, it does not exist for the vault. An **index** file is written as
+  `<id>.vx.part`, fsync, then renamed to `<id>.vx` (the commit point), so a `.vx` index that does not decrypt is always
+  damage, never a pulled stick. Unreferenced files are removed by the cleanup (8.6).
 
 ### 6.4 Index content
 ~~~js
@@ -465,10 +467,11 @@ system. So:
 ### 8.2 The atomic write on encrypted files
 An encrypted file is never changed in place. A change:
 1. encrypts the new content into a new pack under a new random name, fsync;
-2. writes a new index file (seq + 1) under a new random name, fsync;
-3. later (idle), deletes the old index file and unreferenced packs.
+2. writes a new index file (seq + 1) as `<id>.vx.part`, fsync, renames it to `<id>.vx`, fsyncs the folder;
+3. later, cleanup deletes old index files, `.part` leftovers and unreferenced packs (by itself every 16 commits).
 The newest index that decrypts is the truth. Pulled out after step 1: the pack is garbage, the old index still rules.
-During step 2: the torn index fails to decrypt, the previous one rules. Several writes that arrive together share one
+During step 2: the `.part` is ignored, the previous index rules. A failed write marks the open store broken; the next
+open reads the truth from the disk. Several writes that arrive together share one
 pack and one index (group commit). The header is the only file changed in place: `.part`, fsync, rename, two copies.
 
 ### 8.3 Costs on the exFAT stick
@@ -648,6 +651,38 @@ Deviations and choices, with the reason:
    the end. A user of the stream must throw the result away if the stream errors.
 9. Left for later steps: reading a byte range of a `.vx` file, the header fallbacks (`vault.bak.json`, the phone's
    copy), the rate limit, everything about the device slot.
+
+### v1 step 2 (store core, API, reading, limits, cleanup): built (commits 129513d, aaee2ee, 56e54c0)
+Done in job 2, parts B1-B5 (`vault export` / `vault verify`, compaction and the store probe come next).
+`hub/vault/`: `vfs.mjs` (guarded file I/O), `replica.mjs` (header copies, index scan, index commit, new replica),
+`indexfile.mjs` (index and pack contents, checked field by field), `vxread.mjs` (range reads), `store-ops.mjs`
+(file operations on a draft), `packs.mjs`, `cleanup.mjs`, `store.mjs` (the API). 29 new tests: store, limits,
+cleanup, unplug at every step of a save, a group commit, a cleanup and a header write, and the store in the
+no-secrets test.
+
+Store API (async; changes go through one write queue; changes of the same moment share one commit):
+`Store.create(dir, {headerText, dk})`, `openVaultFolder(dir, unlock)`, `tree(prefix)`, `stat(path)`,
+`read(path, {start, end})`, `write(path, data, {ifMatch})` (ifMatch null = create only), `mkdir(path)`,
+`move(from, to, {ifMatch})`, `remove(paths)` -> trash ids, `restore(tids, {to})`, `listTrash()`, `cleanup()`,
+`writeHeader(text)`, `status()` (counts, problems, last cleanup; no names), `close()`.
+
+Deviations and choices, with the reason:
+1. Index files go through `.part` + rename (6.3 said no `.part`). Without it, a stick pulled during a save leaves a
+   torn `.vx` index that looks exactly like damage, and the safety rule would then stop every later cleanup. Packs
+   keep the no-`.part` write. Cost: one rename more per commit on the stick (to be measured by the store probe).
+2. The pack's table of contents is at the end, not the start: the blob offsets are then known before it is written.
+3. Cleanup refuses when **any** index file is damaged, not only "the newest": an unreadable file has no readable
+   number, so nobody can prove it is older. It also re-reads and MAC-checks both header copies when it runs.
+4. Open never writes. Leftovers (`.part` files, an unfinished header copy) are removed by cleanup, which the store
+   also queues by itself every 16 commits: open reads every index file (at most 256), so they must not pile up.
+5. A store with problems (damaged index, header copy) still opens, reads and writes; only cleanup is refused, and
+   `status().problems` says why. Repair is a later tool.
+6. Writing a file creates its missing parent folders. Names that differ only in case are refused (exFAT, Windows,
+   export). Paths follow `relOk` (120 characters per name, 240 per path, depth 16).
+7. Part reads check the piece against the pack's table of contents; whole reads check the content id (HMAC).
+8. Limits besides 6.6: 100,000 files, 100,000 trash entries, 64 extents per file, 256 MiB per file, an index inflates
+   to at most 64 MiB, at most 256 files in `_index` and 20,000 in `_packs`.
+9. Files whose names are not canonical vault names are never touched, in `_index`, `_packs` or the folder itself.
 
 **v2: device slot.**
 7. Keystore adapter (exactly 256 bytes), enroll, unlock (try `sign`, else fingerprint box, then sign; reopen the page only if not visible),
