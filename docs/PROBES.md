@@ -249,8 +249,10 @@ New:
 | files after the steady part | _index 4, _packs 6; no automatic step left | the same |
 | full verify after each part | OK | OK |
 
-Pull test (automatic maintenance on): 5 saves finished, the 6th failed with WRITE_FAILED (stick pulled). The
-p10-check result is still to come. The last line of the run ("cleanup failed ... I/O error") is the probe's own
+Pull test (automatic maintenance on): 5 saves finished, the 6th failed with WRITE_FAILED (stick pulled). After
+re-plugging, `p10-check.mjs`: the vault opened with the **old state** (the last finished save), no problems, 3 index
+files; a **full** cleanup (1 step) removed the torn index `.part` file and the pack of the save that was running; a
+full verify said OK; the test vault was removed. The last line of the run ("cleanup failed ... I/O error") is the probe's own
 cleanup of its stick test folder after the pull: the stick was gone; that folder had been removed before the pull.
 
 What it means:
