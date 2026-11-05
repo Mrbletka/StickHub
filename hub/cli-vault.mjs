@@ -1,19 +1,22 @@
 // node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]
 // node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]
+// node hub/cli.mjs vault dev-create [<folder>]   DEV ONLY (hub/devvault.mjs): a test vault until the lock screen
 // The passphrase (or with --paper the paper code) is asked on the terminal with no echo, never taken from argv, the
 // environment or a file. Neither command writes to the vault (the store opens with automatic cleanup off).
 // Output: counts and random file names only, never a name from inside the vault. Exit 0 = ok, 1 = a problem, 2 = usage.
 
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { VaultError } from './vault/errors.mjs';
 import { openVaultFolder } from './vault/store.mjs';
 import { unlockWithPassphrase, unlockWithPaperCode } from './vault/header.mjs';
 import { checkExportDest, exportVault } from './vault/export.mjs';
 import { readSecret, PromptCancelled } from './cli-prompt.mjs';
+import { devCreate } from './devvault.mjs';
 
 export const VAULT_USAGE = `Usage:
   node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]
-  node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]`;
+  node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]
+  node hub/cli.mjs vault dev-create [<folder>]   DEV ONLY: a test vault (default ~/.stickhub/vault-dev)`;
 
 function parse(argv) {
   const words = [];
@@ -44,12 +47,24 @@ export function formatVerify(r) {
  * Run a vault command.
  * @param {string[]} argv  words after "vault"
  * @param {{input?: object, out?: (s: string) => void, err?: (s: string) => void, prompt?: object,
- *   root: string, mounts: () => Promise<string[]>}} d  input: the terminal; mounts: mounted volumes (sticks)
+ *   root: string, mounts: () => Promise<string[]>, home?: string, outTTY?: boolean, kdf?: object}} d
+ *   input: the terminal; mounts: mounted volumes (sticks); home: ~/.stickhub (dev-create's default folder);
+ *   outTTY, kdf: tests only
  * @returns {Promise<number>} exit code
  */
 export async function vaultCommand(argv, d) {
   const out = d.out || ((s) => console.log(s));
   const err = d.err || ((s) => console.error(s));
+  if (argv[0] === 'dev-create') {
+    if (argv.length > 2 || argv[1]?.startsWith('--')) { err(VAULT_USAGE); return 2; }
+    try {
+      return await devCreate(argv[1] ?? join(d.home, 'vault-dev'), d);
+    } catch (e) {
+      if (e instanceof PromptCancelled) { err('Cancelled. Nothing was created.'); return 1; }
+      err(`Error: ${e.message}`);
+      return 1;
+    }
+  }
   const p = parse(argv);
   const [cmd, folder, dest] = p?.words || [];
   if (!p || !((cmd === 'verify' && folder && !dest) || (cmd === 'export' && folder && dest)) || p.words.length > 3 || (cmd === 'export' && (p.flags.quick || p.flags.json))) {

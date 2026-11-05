@@ -52,11 +52,19 @@ node hub/cli.mjs hub stop                          # stop the hub and its apps
 node hub/cli.mjs watch start|stop|status           # the watcher
 ```
 
-## Encrypted vault (being built; not used by the hub yet)
+## Encrypted vault (being built)
 ```sh
 node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]   # check everything, write nothing
 node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # decrypt all notes to plain files
+node hub/cli.mjs vault dev-create [<folder>]   # DEV ONLY: a test vault (default ~/.stickhub/vault-dev)
+node hub/cli.mjs open --vault [<folder>]       # DEV ONLY: type the passphrase, the hub runs with the vault open
 ```
+**DEV ONLY until the lock screen (job 4).** `dev-create` shows a generated 5-word passphrase and a paper code once on
+the terminal, asks you to type the passphrase back, and only then writes the vault. `open --vault` asks for the
+passphrase (no echo) and starts the hub with the vault open in its memory: apps with `"data": "hubfs"` read and write
+through the data API (`~/.stickhub/run/data.sock`); apps that still want plain files show why on their tile and do
+not start; the plain data sync leaves `data/` alone. Without `--vault` the hub works as before. No sync of the vault
+to the stick yet (job 5), no lock screen, no auto-lock.
 Both ask for the passphrase (or with `--paper` the paper code) on the terminal, with no echo; never as an argument.
 `export` refuses a folder on the stick, inside the vault, inside this clone, or one that is not empty. The exported
 files are **not encrypted**: delete them when you no longer need them. See `docs/VAULT-DESIGN.md`.
@@ -86,7 +94,11 @@ By hand: make `apps/<id>/app.json` (id: a-z, 0-9, "-"; must match the folder nam
 - `static`: the hub serves the folder `entry` (default: the app folder). `"spa": true` sends unknown paths to index.html.
 - `"port": 4110` gives an app a fixed port (other apps never get it), so its localStorage survives restarts.
 - `"atomicData": true`: the app writes its data only with temp file + rename, so sync may copy it while the app runs.
-- The app gets `PORT`, `HUB_APP_ID`, `HUB_APP_DIR`, `HUB_DATA_DIR`. Then reload the hub page
+- `"data"`: how the app keeps data. `"hubfs"`: through `lib/hubfs.mjs` (works with and without the vault);
+  `"files"`: plain files in `HUB_DATA_DIR` (cannot start while the vault is on); `"none"`: no data. Default:
+  `"none"` for static apps, `"files"` for the others.
+- The app gets `PORT`, `HUB_APP_ID`, `HUB_APP_DIR`, and `HUB_DATA_DIR` (no vault) or `HUB_DATA_SOCKET` +
+  `HUB_DATA_TOKEN` (vault on, `"data": "hubfs"` apps only; a new token each start). Then reload the hub page
   (or `curl -X POST http://127.0.0.1:8787/api/apps/reload`).
 
 ## Layout

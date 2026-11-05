@@ -19,9 +19,9 @@ export class PromptCancelled extends Error {
 export function readSecret(question, o = {}) {
   const input = o.input || process.stdin;
   const output = o.output || process.stderr;
-  output.write(question);
   const raw = typeof input.setRawMode === 'function';
-  if (raw) input.setRawMode(true);
+  if (raw) input.setRawMode(true); // before the question: what is typed after it is never echoed
+  output.write(question);
   const decoder = new StringDecoder('utf8');
   let chars = [];
   let esc = ''; // inside an escape sequence

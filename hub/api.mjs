@@ -56,7 +56,7 @@ export function createApi(hub) {
 
     // Open routes.
     if (req.method === 'GET' && path === '/api/ping') {
-      return json(res, 200, { name: 'StickHub', pid: process.pid, lastLoginAt, mode: hub.mode?.mode || 'phone' });
+      return json(res, 200, { name: 'StickHub', pid: process.pid, lastLoginAt, mode: hub.mode?.mode || 'phone', vault: !!hub.mode?.vault });
     }
     if (req.method === 'POST' && path === '/api/auth/exchange') {
       const body = await readJson(req).catch(() => null);

@@ -71,11 +71,18 @@ export function openLog(logsDir, name) {
  * @param {string} root  repo root
  * @param {string} script  e.g. "hub/server.mjs"
  * @param {string} log  e.g. "hub.log"
+ * @param {object} [env]
+ * @param {string|null} [input]  one line for the child's stdin (a pipe; the dev vault passphrase), else no stdin
  */
-export function startDetached(root, script, log, env = {}) {
+export function startDetached(root, script, log, env = {}, input = null) {
   const fd = openLog(join(root, 'logs'), log);
   try {
-    const child = spawn(process.execPath, [join(root, script)], { cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, ...env } });
+    const child = spawn(process.execPath, [join(root, script)], { cwd: root, detached: true,
+      stdio: [input === null ? 'ignore' : 'pipe', fd, fd], env: { ...process.env, ...env } });
+    if (input !== null) {
+      child.stdin.on('error', () => {}); // the child quit before reading: its exit code says why
+      child.stdin.end(`${input}\n`);
+    }
     child.unref();
     return child;
   } finally {
@@ -90,27 +97,31 @@ function lastLine(file) {
 
 /**
  * Start the hub in the background if it is not running; wait until it answers (max ~10 s).
- * @param {{dataOnStick?: boolean, home?: string}} [o]  dataOnStick: app data on the stick (a hub running the
- *   other way is restarted); home: ~/.stickhub (for the token to stop it)
+ * @param {{dataOnStick?: boolean, home?: string, vault?: string, secret?: string}} [o]  dataOnStick: app data on
+ *   the stick (a hub running the other way is restarted); home: ~/.stickhub (for the token to stop it);
+ *   vault + secret: DEV ONLY, open this vault folder with this passphrase (sent on the hub's stdin, never in argv
+ *   or env); a hub running without a vault is restarted. A failed start throws with exitCode (3: wrong passphrase).
  */
 export async function ensureHub(root, port = HUB_PORT, o = {}) {
   const ping = await callHub('/api/ping', { port, timeout: 1500 });
   if (ping?.status === 200 && ping.body?.name === 'StickHub') {
-    if (!o.dataOnStick || ping.body.mode === 'data-on-stick') return { started: false, mode: ping.body.mode };
+    const fits = o.vault ? ping.body.vault === true : !o.dataOnStick || ping.body.mode === 'data-on-stick';
+    if (fits) return { started: false, mode: ping.body.mode, vault: ping.body.vault === true };
     // Running with app data on the phone, but data on the stick is wanted: restart (apps stop cleanly first).
     await stopHub(o.home, port);
     const end = Date.now() + 10_000;
     while (Date.now() < end && (await hubRunning(port))) await new Promise((r) => setTimeout(r, 200));
     if (await hubRunning(port)) throw new Error('The running hub did not stop. Try: node hub/cli.mjs hub stop');
   }
-  const child = startDetached(root, 'hub/server.mjs', 'hub.log', o.dataOnStick ? { STICKHUB_DATA_ON_STICK: '1' } : {});
+  const env = { ...(o.dataOnStick ? { STICKHUB_DATA_ON_STICK: '1' } : {}), ...(o.vault ? { HUB_DEV_VAULT: o.vault } : {}) };
+  const child = startDetached(root, 'hub/server.mjs', 'hub.log', env, o.vault ? o.secret ?? '' : null);
   let exited = null;
   child.once('exit', (code) => { exited = code; });
   const end = Date.now() + 10_000;
   while (Date.now() < end) {
     await new Promise((r) => setTimeout(r, 200));
-    if (exited !== null) throw new Error(`The hub stopped at once: ${lastLine(join(root, 'logs', 'hub.log'))}`);
-    if (await hubRunning(port)) return { started: true, pid: child.pid, mode: o.dataOnStick ? 'data-on-stick' : 'phone' };
+    if (exited !== null) throw Object.assign(new Error(`The hub stopped at once: ${lastLine(join(root, 'logs', 'hub.log'))}`), { exitCode: exited });
+    if (await hubRunning(port)) return { started: true, pid: child.pid, mode: o.dataOnStick ? 'data-on-stick' : 'phone', vault: !!o.vault };
   }
   throw new Error('The hub did not start within 10 s. See logs/hub.log');
 }

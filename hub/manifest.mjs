@@ -2,7 +2,21 @@
 // One broken manifest must never break the hub, so this returns errors instead of throwing.
 
 export const ID_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-const KEYS = new Set(['id', 'name', 'icon', 'engine', 'entry', 'port', 'args', 'env', 'version', 'description', 'spa', 'health', 'atomicData']);
+const KEYS = new Set(['id', 'name', 'icon', 'engine', 'entry', 'port', 'args', 'env', 'version', 'description', 'spa', 'health', 'atomicData', 'data']);
+/** How an app keeps its data ("data" in app.json): see dataUse(). */
+export const DATA_USES = ['hubfs', 'files', 'none'];
+
+/**
+ * How an app keeps its data:
+ * - "hubfs": through lib/hubfs.mjs. With the vault on it gets HUB_DATA_SOCKET + HUB_DATA_TOKEN, otherwise HUB_DATA_DIR.
+ * - "files": plain files in HUB_DATA_DIR (the old way). Cannot start while the vault is on.
+ * - "none": no data. The default for static apps.
+ * Default for other engines: "files".
+ * @param {{engine: string, data?: string}} m  a checked manifest
+ */
+export function dataUse(m) {
+  return m.data ?? (m.engine === 'static' ? 'none' : 'files');
+}
 const RESERVED_ENV = /^(PORT|HUB_.*|NODE_OPTIONS)$/;
 // exFAT cannot store these, and they have no place in a relative path anyway.
 const BAD_CHARS = /[<>:"\\|?*\u0000-\u001f]/;
@@ -69,6 +83,7 @@ export function validateManifest(m, opts = {}) {
   if (m.spa !== undefined && typeof m.spa !== 'boolean') errors.push('spa: true or false');
   // atomicData: the app only writes its data with temp file + rename, so sync may copy it while the app runs.
   if (m.atomicData !== undefined && typeof m.atomicData !== 'boolean') errors.push('atomicData: true or false');
+  if (m.data !== undefined && !DATA_USES.includes(m.data)) errors.push('data: "hubfs" (lib/hubfs.mjs), "files" (HUB_DATA_DIR) or "none"');
   if (m.health !== undefined && (typeof m.health !== 'string' || !/^\/[\w\-./]*$/.test(m.health))) errors.push('health: a path like "/health"');
 
   if (!errors.length && opts.engines) {

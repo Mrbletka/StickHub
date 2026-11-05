@@ -7,12 +7,18 @@ import { join } from 'node:path';
 import { scanApps } from './apps.mjs';
 import { findFreePort, isPortFree } from './ports.mjs';
 import { RingLog } from './ringlog.mjs';
+import { dataUse } from './manifest.mjs';
+
+/** Shown on the tile of an app that saves plain files while the vault is on (it does not start). */
+export const VAULT_FILES_ERROR = 'This app saves plain files (HUB_DATA_DIR). With the vault on it must use hubfs: '
+  + 'lib/hubfs.mjs and "data": "hubfs" in app.json.';
 
 /**
  * @typedef {object} EngineContext
  * @property {import('./apps.mjs').App} app
  * @property {number} port      the port the app must listen on (127.0.0.1)
- * @property {Record<string, string>} env  PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR
+ * @property {Record<string, string>} env  PORT, HUB_APP_ID, HUB_APP_DIR, and HUB_DATA_DIR (no vault) or
+ *   HUB_DATA_SOCKET + HUB_DATA_TOKEN (vault on, apps with "data": "hubfs")
  * @property {(stream: 'out'|'err'|'sys', line: string) => void} log
  * @property {number} [startTimeoutMs]
  */
@@ -23,8 +29,10 @@ import { RingLog } from './ringlog.mjs';
 export class ProcessManager extends EventEmitter {
   /**
    * @param {{engines: Map<string, object>, appsDir: string, dataDir: string,
-   *   portRange?: {from: number, to: number}, startTimeoutMs?: number, pidFile?: import('./proc.mjs').PidFile}} opts
+   *   portRange?: {from: number, to: number}, startTimeoutMs?: number, pidFile?: import('./proc.mjs').PidFile,
+   *   dataApi?: {socketPath: string, issue: (id: string) => string, revoke: (id: string) => void}}} opts
    *   pidFile: where running app processes are remembered (for cleanup after a hard kill)
+   *   dataApi: the vault is on: apps get the data socket and a fresh token per start, never HUB_DATA_DIR
    */
   constructor(opts) {
     super();
@@ -34,6 +42,7 @@ export class ProcessManager extends EventEmitter {
     this.portRange = opts.portRange || { from: 4100, to: 4199 };
     this.startTimeoutMs = opts.startTimeoutMs;
     this.pidFile = opts.pidFile || null;
+    this.dataApi = opts.dataApi || null;
     /** @type {Map<string, import('./apps.mjs').App>} */
     this.apps = new Map();
     /** @type {Map<string, {status: string, port: number|null, url: string|null, error: string|null, startedAt: number|null, handle: any, log: RingLog}>} */
@@ -68,9 +77,9 @@ export class ProcessManager extends EventEmitter {
     return {
       id, name: a?.manifest?.name || id, description: a?.manifest?.description || '',
       engine: a?.manifest?.engine || null, version: a?.manifest?.version || null, hasIcon: !!a?.manifest?.icon,
-      atomicData: a?.manifest?.atomicData === true,
+      atomicData: a?.manifest?.atomicData === true, data: a?.manifest ? dataUse(a.manifest) : null,
       status: s.status, port: s.port, url: s.url, error: s.error, startedAt: s.startedAt,
-      problems: a?.errors || [],
+      problems: [...(a?.errors || []), ...(this.#vaultBlocks(a) ? [VAULT_FILES_ERROR] : [])],
     };
   }
 
@@ -109,26 +118,24 @@ export class ProcessManager extends EventEmitter {
       if (!app.manifest) throw new Error(`App "${id}" has problems: ${app.errors.join('; ')}`);
       const engine = this.engines.get(app.manifest.engine);
       if (!engine) throw new Error(`Engine "${app.manifest.engine}" is not installed`);
+      // One app that still wants plain files never breaks the hub: it shows why on its tile and does not start.
+      if (this.#vaultBlocks(app)) { this.#set(id, { status: 'error', error: VAULT_FILES_ERROR }); throw new Error(VAULT_FILES_ERROR); }
       // Data on the stick and no stick: refuse without marking the app as failed.
-      if (!this.dataDir) throw new Error('Plug in the stick: the app data is on it.');
+      if (!this.dataApi && !this.dataDir) throw new Error('Plug in the stick: the app data is on it.');
 
       this.#set(id, { status: 'starting', error: null });
       try {
         const port = await this.#pickPort(app);
-        const dataDir = join(this.dataDir, id);
-        await mkdir(dataDir, { recursive: true });
+        const env = { PORT: String(port), HUB_APP_ID: id, HUB_APP_DIR: app.dir, ...(await this.#dataEnv(app)) };
         this.#log(id, 'sys', `starting on port ${port}`);
-        const handle = await engine.start({
-          app, port, startTimeoutMs: this.startTimeoutMs,
-          env: { PORT: String(port), HUB_APP_ID: id, HUB_APP_DIR: app.dir, HUB_DATA_DIR: dataDir },
-          log: (stream, line) => this.#log(id, stream, line),
-        });
+        const handle = await engine.start({ app, port, startTimeoutMs: this.startTimeoutMs, env, log: (stream, line) => this.#log(id, stream, line) });
         this.#set(id, { status: 'running', port: handle.port, url: handle.url, startedAt: Date.now(), handle });
         if (handle.pid && handle.argv) await this.pidFile?.add(id, handle.pid, handle.argv);
         this.#log(id, 'sys', `running at ${handle.url}`);
         handle.exit?.then((r) => this.#onExit(id, handle, r));
         return this.view(id);
       } catch (e) {
+        this.dataApi?.revoke(id);
         this.#log(id, 'sys', `start failed: ${e.message}`);
         this.#set(id, { status: 'error', error: e.message, port: null, url: null, handle: null });
         throw e;
@@ -144,6 +151,7 @@ export class ProcessManager extends EventEmitter {
       this.#set(id, { status: 'stopping' });
       try {
         await s.handle.stop(graceMs);
+        this.dataApi?.revoke(id);
         await this.pidFile?.remove(id);
         this.#log(id, 'sys', 'stopped');
         this.#set(id, { status: 'stopped', port: null, url: null, startedAt: null, handle: null, error: null });
@@ -180,11 +188,29 @@ export class ProcessManager extends EventEmitter {
   #onExit(id, handle, r) {
     const s = this.state.get(id);
     if (!s || s.handle !== handle || s.status !== 'running') return;
+    this.dataApi?.revoke(id);
     this.pidFile?.remove(id);
     const why = r.error ? r.error.message : r.signal ? `killed by ${r.signal}` : `exit code ${r.code}`;
     this.#log(id, 'sys', `the app stopped by itself (${why})`);
     this.#set(id, { status: r.code === 0 ? 'stopped' : 'error', error: r.code === 0 ? null : `Stopped by itself (${why})`,
       port: null, url: null, startedAt: null, handle: null });
+  }
+
+  /** True if the vault is on and this app still wants plain files. */
+  #vaultBlocks(app) {
+    return !!(this.dataApi && app?.manifest && dataUse(app.manifest) === 'files');
+  }
+
+  /**
+   * Where the app's data lives. Vault on: the data socket and a fresh token for hubfs apps (the old token stops
+   * working), nothing for apps without data. Vault off: HUB_DATA_DIR = data/<id>, as before. The token goes only
+   * into the app's environment: never into a log line, the status or the pid file.
+   */
+  async #dataEnv(app) {
+    if (this.dataApi) return dataUse(app.manifest) === 'hubfs' ? { HUB_DATA_SOCKET: this.dataApi.socketPath, HUB_DATA_TOKEN: this.dataApi.issue(app.id) } : {};
+    const dataDir = join(this.dataDir, app.id);
+    await mkdir(dataDir, { recursive: true });
+    return { HUB_DATA_DIR: dataDir };
   }
 
   async #pickPort(app) {

@@ -6,6 +6,7 @@
 //   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
 //   node hub/cli.mjs login [--open]      fresh one-time login link (if the hub page says "Log in")
 //   node hub/cli.mjs open [--data-on-stick]   start the hub if needed and open it (app data on the stick)
+//   node hub/cli.mjs open --vault [<folder>]   DEV ONLY: ask the passphrase, start the hub with the vault open
 //   node hub/cli.mjs hub stop            stop the hub and its apps
 //   node hub/cli.mjs watch start|stop|status   the watcher (opens the hub when the stick is plugged in)
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
@@ -13,7 +14,8 @@
 //   node hub/cli.mjs doctor [--json]     what this device has and lacks for StickHub, and how to fix it
 //   node hub/cli.mjs vault verify|export ...   check an encrypted vault folder, or export it to plain files
 
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { listVolumes } from './platform/termux.mjs';
 import { createGit } from './platform/git.mjs';
@@ -31,6 +33,8 @@ import { runDoctor, formatReport, realCtx } from './doctor.mjs';
 import { loadApp } from './apps.mjs';
 import { loadEngines } from './engines.mjs';
 import { vaultCommand, VAULT_USAGE } from './cli-vault.mjs';
+import { devVaultDir, EXIT_WRONG_PASSPHRASE } from './devvault.mjs';
+import { readSecret, PromptCancelled } from './cli-prompt.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
@@ -41,6 +45,7 @@ const USAGE = `Usage:
   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
   node hub/cli.mjs login [--open]
   node hub/cli.mjs open [--data-on-stick]
+  node hub/cli.mjs open --vault [<folder>]     DEV ONLY (until the lock screen): open the hub with a vault
   node hub/cli.mjs hub stop
   node hub/cli.mjs watch start|stop|status
   node hub/cli.mjs widget install
@@ -57,6 +62,7 @@ function parse(argv) {
     if (a === '--force' || a === '--yes' || a === '--open') flags[a.slice(2)] = true;
     else if (a === '--data-on-stick') flags.dataOnStick = true;
     else if (a === '--json') flags.json = true;
+    else if (a === '--vault') flags.vault = i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[++i] : true; // folder optional
     else if (a === '--name' || a === '--mount' || a === '--engine') {
       if (i + 1 >= argv.length) throw new UsageError(`${a} needs a value`);
       flags[a.slice(2)] = argv[++i];
@@ -190,8 +196,44 @@ async function login(flags) {
   return 0;
 }
 
+/**
+ * DEV ONLY (job 4 replaces it): ask the vault passphrase here (no echo), start the hub with the vault open, open it.
+ * The passphrase goes to the hub on its stdin (a pipe), never in argv, the environment or a file. 3 tries.
+ */
+async function openVault(flags) {
+  const home = stickhubHome();
+  const dir = resolve(flags.vault === true ? devVaultDir(home) : flags.vault);
+  if (flags.dataOnStick || (await loadSettings()).dataOnStick) throw new Error('The dev vault does not work with data on the stick yet: drop --data-on-stick (or dataOnStick in settings.json).');
+  if (!existsSync(join(dir, 'vault.json'))) throw new Error(`No vault in ${dir}. Make one (DEV ONLY): node hub/cli.mjs vault dev-create ${dir}`);
+  const running = await callHub('/api/ping', { timeout: 1500 });
+  if (running?.status === 200 && running.body?.vault === true) {
+    console.log('The hub already runs with a vault open.');
+    return login({ open: true });
+  }
+  if (!process.stdin.isTTY) throw new Error('This needs a terminal: the passphrase is typed, never piped or passed as an argument.');
+  if (running) console.log('The running hub has no vault: it restarts (apps stop first).');
+  for (let tries = 1; ; tries++) {
+    let secret;
+    try { secret = await readSecret('Vault passphrase (DEV ONLY): '); } catch (e) {
+      if (e instanceof PromptCancelled) { console.log('Cancelled.'); return 1; }
+      throw e;
+    }
+    try {
+      const r = await ensureHub(ROOT, undefined, { vault: dir, secret, home });
+      console.log(r.started ? `Started the hub with the vault open (pid ${r.pid}, DEV ONLY, log: logs/hub.log).` : 'The hub runs with a vault open.');
+      break;
+    } catch (e) {
+      if (e.exitCode !== EXIT_WRONG_PASSPHRASE) throw e;
+      if (tries >= 3) { console.log('Wrong passphrase. Nothing was started.'); return 1; }
+      console.log('Wrong passphrase. Try again.');
+    }
+  }
+  return login({ open: true });
+}
+
 /** Start the hub in the background if needed, then open it with a login link. */
 async function open(flags) {
+  if (flags.vault) return openVault(flags);
   const dataOnStick = flags.dataOnStick || (await loadSettings()).dataOnStick;
   const r = await ensureHub(ROOT, undefined, { dataOnStick, home: stickhubHome() });
   if (r.started) console.log(`Started the hub (pid ${r.pid}${dataOnStick ? ', app data on the stick' : ''}, log: logs/hub.log).`);
@@ -215,7 +257,7 @@ async function newApp(id, flags) {
 
 async function main(argv) {
   if (argv[0] === 'vault') { // own options (--paper, --quick): handled before the general parser
-    return vaultCommand(argv.slice(1), { root: ROOT, mounts: async () => (await listVolumes()).volumes.map((v) => v.mountPoint) });
+    return vaultCommand(argv.slice(1), { root: ROOT, home: stickhubHome(), mounts: async () => (await listVolumes()).volumes.map((v) => v.mountPoint) });
   }
   const { words, flags } = parse(argv);
   const [a, b, c] = words;

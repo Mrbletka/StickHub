@@ -98,7 +98,10 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
   "entry": "server.js", "port": "auto", "args": [], "env": {}, "version": "0.1.0" }
 ~~~
 - Relative paths only, no "..". Validate strictly. One broken app must never break the hub: show the error on its tile.
-- The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>).
+- The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>). With the vault on (DEV ONLY now:
+  `open --vault`), apps with `"data": "hubfs"` get HUB_DATA_SOCKET + HUB_DATA_TOKEN instead (a new token per start,
+  revoked on stop and crash) and never HUB_DATA_DIR; apps with `"data": "files"` (the default for node-server) show
+  why on their tile and do not start; `"none"` (the default for static) gets nothing.
 - Saves: an app saves to HUB_DATA_DIR through its own server. Browser storage (IndexedDB, localStorage) is NOT synced.
 
 ## Doctor
@@ -225,8 +228,13 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
 - Job 3a, v1 step 3 part 1: a failed compaction step still cleans up (5918283); the data API server in hub/dataapi/
   (see its README: wire format, limits, errors) and the client hub/appkit/hubfs.mjs (one file, node: only, socket
   or plain-file mode), contract suite for both modes and hostile tests. NOT wired into the hub: the hub behaves as
-  before. Probe 11 (probes/p11-dataapi.mjs): data API latency on the phone and the stick. Next: 3b procman starts apps with HUB_DATA_SOCKET +
-  HUB_DATA_TOKEN (scaffold copies hubfs into new apps); 3c the Notebook and sample apps use hubfs; job 4 lock screen.
+  before. Probe 11 (probes/p11-dataapi.mjs): data API latency on the phone and the stick.
+- Job 3b+3c (wire the vault into the hub, port the apps), one commit each, on top of main:
+  0a hubfs keeps at most 8 requests in flight (queue, order of changes per path, 60 s timeout), server 64
+  connections: **done**. 0b shallow readdir (one directory read / `depth: 1`), plain-mode tree ids only from stat:
+  **done**. 1 dev vault (`vault dev-create`, `open --vault`, hub/devvault.mjs, DEV ONLY), data API in the hub,
+  procman tokens, `"data"` in app.json, close order: **done**. Still to do: 2 scaffold copies hubfs + app-rules +
+  sync off in vault mode; 3 tap-counter; 4 Notebook; 5 `/__hub/clear` + probe 12; docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

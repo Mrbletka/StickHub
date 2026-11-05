@@ -11,10 +11,10 @@ import { join, resolve, sep, dirname } from 'node:path';
 import { VaultError, fail } from './errors.mjs';
 import { checkPath } from './store-ops.mjs';
 
-const inside = (child, parent) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+export const inside = (child, parent) => child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 
 /** Real path of p, or of its nearest existing parent plus the rest (p itself may not exist yet). */
-async function realish(p) {
+export async function realish(p) {
   const abs = resolve(p);
   const rest = [];
   for (let cur = abs; ; cur = dirname(cur)) {
