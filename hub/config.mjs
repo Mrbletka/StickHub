@@ -30,15 +30,19 @@ export async function deviceId(home = stickhubHome()) {
   return id;
 }
 
-const DEFAULT_SETTINGS = { requireStick: false, autoPull: false, dataOnStick: false };
+const DEFAULT_SETTINGS = { requireStick: false, autoPull: false, dataOnStick: false, autoLockSeconds: 300 };
+/** Number settings: [min, max]. */
+const NUMBER_SETTINGS = { autoLockSeconds: [10, 86_400] };
 
 /**
  * Settings from ~/.stickhub/settings.json (all optional):
  *   requireStick: the hub refuses to start without the stick (cartridge feel). Default false.
  *   autoPull: the watcher runs `git pull --ff-only` when the stick is plugged in. Default false.
  *   dataOnStick: app data lives on the stick (HUB/data/<id>), the code runs from the clone. Default false.
+ *   autoLockSeconds: the vault locks after this many seconds without a visible hub page (10 to 86400, default 300;
+ *   short values are for tests and probes).
  * @param {string} home
- * @returns {Promise<{requireStick: boolean, autoPull: boolean, dataOnStick: boolean}>}
+ * @returns {Promise<{requireStick: boolean, autoPull: boolean, dataOnStick: boolean, autoLockSeconds: number}>}
  */
 export async function loadSettings(home = stickhubHome()) {
   let j;
@@ -50,8 +54,10 @@ export async function loadSettings(home = stickhubHome()) {
   }
   const out = { ...DEFAULT_SETTINGS };
   for (const [k, v] of Object.entries(j || {})) {
+    const range = NUMBER_SETTINGS[k];
     if (!(k in DEFAULT_SETTINGS)) console.warn(`settings.json: unknown setting "${k}" ignored`);
-    else if (typeof v !== 'boolean') console.warn(`settings.json: "${k}" must be true or false`);
+    else if (range && !(Number.isInteger(v) && v >= range[0] && v <= range[1])) console.warn(`settings.json: "${k}" must be a whole number from ${range[0]} to ${range[1]}`);
+    else if (!range && typeof v !== 'boolean') console.warn(`settings.json: "${k}" must be true or false`);
     else out[k] = v;
   }
   return out;

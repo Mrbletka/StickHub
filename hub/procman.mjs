@@ -30,7 +30,8 @@ export class ProcessManager extends EventEmitter {
   /**
    * @param {{engines: Map<string, object>, appsDir: string, dataDir: string,
    *   portRange?: {from: number, to: number}, startTimeoutMs?: number, pidFile?: import('./proc.mjs').PidFile,
-   *   dataApi?: {socketPath: string, issue: (id: string) => string, revoke: (id: string) => void}}} opts
+   *   dataApi?: {socketPath: string, issue: (id: string) => string, revoke: (id: string) => void},
+   *   startBlock?: () => string|null}} opts
    *   pidFile: where running app processes are remembered (for cleanup after a hard kill)
    *   dataApi: the vault is on: apps get the data socket and a fresh token per start, never HUB_DATA_DIR
    */
@@ -45,6 +46,8 @@ export class ProcessManager extends EventEmitter {
     this.dataApi = opts.dataApi || null;
     /** Called with the views of running apps right before they stop (the hub clears their browser storage). */
     this.beforeStop = opts.beforeStop || null;
+    /** Returns why no app may start right now (the vault is locked), or null. */
+    this.startBlock = opts.startBlock || null;
     /** @type {Map<string, import('./apps.mjs').App>} */
     this.apps = new Map();
     /** @type {Map<string, {status: string, port: number|null, url: string|null, error: string|null, startedAt: number|null, handle: any, log: RingLog}>} */
@@ -118,6 +121,8 @@ export class ProcessManager extends EventEmitter {
       const s = this.#st(id);
       if (s.status === 'running') return this.view(id);
       if (!app.manifest) throw new Error(`App "${id}" has problems: ${app.errors.join('; ')}`);
+      const blocked = this.startBlock?.(); // the vault is locked: no app starts (the app is not marked as failed)
+      if (blocked) throw Object.assign(new Error(blocked), { code: 'LOCKED' });
       const engine = this.engines.get(app.manifest.engine);
       if (!engine) throw new Error(`Engine "${app.manifest.engine}" is not installed`);
       // One app that still wants plain files never breaks the hub: it shows why on its tile and does not start.

@@ -258,6 +258,12 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   **Job 3b+3c done: 94e1cad** (tested on the phone 2026-11-08: all tests pass; probe 12, docs/PROBES.md run 14:
   Chrome honours Clear-Site-Data, a Notebook save on the stick p50 254 ms / p95 587 ms, listing 230 notes 5.5 ms).
   Next: job 4 (lock screen; it replaces hub/devvault.mjs and calls hub/ui/clear.js on lock).
+- Job 4 (lock screen, v1 step 4), one commit each: 1 vault service in the hub (hub/lock/: service.mjs states
+  none/locked/unlocking/unlocked/locking, unlock by passphrase or paper code, one at a time, lock wins; limiter.mjs the
+  7.9 rate limit in ~/.stickhub/vault/attempts.json; routes.mjs /api/vault, /unlock, /lock, /heartbeat; auto-lock
+  timer; the hub starts locked when <home>/vault-dev/vault.json exists): **done**. Still to do: 2 the lock action and
+  the locked-API audit; 3 the lock screen page, then remove the dev unlock; 4 `vault setup|status|lock`, doctor;
+  5 probe 13 and docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

@@ -13,7 +13,8 @@ export const CLEAR_WAIT_MS = 400;
 /**
  * Create the API handler.
  * @param {{procman: import('./procman.mjs').ProcessManager, stick: import('./sync/service.mjs').StickService,
- *   status: () => object, token: string, codes: import('./auth.mjs').LoginCodes, shutdown?: () => void}} hub
+ *   status: () => object, token: string, codes: import('./auth.mjs').LoginCodes, shutdown?: () => void,
+ *   vaultRoutes?: (req, res, path: string) => Promise<boolean>}} hub  vaultRoutes: /api/vault* (hub/lock/routes.mjs)
  * @returns {{handle: (req, res, path: string) => Promise<void>, close: () => void}}
  */
 export function createApi(hub) {
@@ -79,6 +80,8 @@ export function createApi(hub) {
       return json(res, 401, { error: 'Not logged in. In Termux run: cd ~/StickHub && node hub/cli.mjs login --open', login: true });
     }
 
+    if (hub.vaultRoutes && await hub.vaultRoutes(req, res, path)) return undefined; // /api/vault*: unlock, lock, status
+
     if (req.method === 'POST' && path === '/api/auth/code') {
       const code = hub.codes.create();
       return json(res, 200, { code, url: `http://127.0.0.1:${req.socket.localPort}/?code=${code}` });
@@ -104,7 +107,7 @@ export function createApi(hub) {
       try {
         return json(res, 200, await procman[m[2]](m[1]));
       } catch (e) {
-        return json(res, 500, { error: e.message, app: procman.view(m[1]) });
+        return json(res, e.code === 'LOCKED' ? 423 : 500, { error: e.message, app: procman.view(m[1]) });
       }
     }
     if (m && req.method === 'GET' && m[2] === 'logs') {

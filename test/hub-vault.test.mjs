@@ -16,7 +16,7 @@ import { createHubFs } from '../hub/appkit/hubfs.mjs';
 import { findFreePort } from '../hub/ports.mjs';
 import { Store } from '../hub/vault/store.mjs';
 import { makeApps, http, GOOD_SERVER } from './helpers.mjs';
-import { makeTestStore, makeTestVault } from './vault-helpers.mjs';
+import { makeTestVault, makeVaultFolder } from './vault-helpers.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const cleanups = [];
@@ -48,11 +48,13 @@ async function setup({ vault = true } = {}) {
   });
   await mkdir(join(fx.appsDir, 'keeper', 'lib'));
   await copyFile(join(ROOT, 'hub', 'appkit', 'hubfs.mjs'), join(fx.appsDir, 'keeper', 'lib', 'hubfs.mjs'));
-  const t = vault ? await makeTestStore() : null;
-  const home = await mkdtemp(join(tmpdir(), 'stickhub-home-'));
+  const vf = vault ? await makeVaultFolder() : null;
+  const home = vf ? vf.home : await mkdtemp(join(tmpdir(), 'stickhub-home-'));
   const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27250, to: 27269 }, home, startTimeoutMs: 6000,
-    stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, ...(t ? { vault: { store: t.store } } : {}) });
+    stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, ...(vf ? { vault: { dir: vf.dir } } : {}) });
   const port = Number(new URL(await hub.listen()).port);
+  if (vf) await hub.vault.unlock('passphrase', vf.passphrase);
+  const t = vf ? { store: hub.vault.store, root: vf.root } : null;
   const call = (path, o = {}) => http(port, path, { ...o, headers: { 'x-hub-token': hub.token, ...o.headers } });
   cleanups.push(async () => { await hub.close().catch(() => {}); await fx.cleanup(); await rm(home, { recursive: true, force: true }); if (t) await rm(t.root, { recursive: true, force: true }); });
   return { fx, t, home, hub, call };
@@ -171,13 +173,14 @@ test('node hub/server.mjs with HUB_DEV_VAULT: passphrase from stdin; wrong = exi
 });
 
 test('the real sample apps with the vault on: tap-counter counts into the vault, pocket-timer needs nothing', async () => {
-  const t = await makeTestStore();
-  const home = await mkdtemp(join(tmpdir(), 'stickhub-home-'));
+  const vf = await makeVaultFolder();
   const data = await mkdtemp(join(tmpdir(), 'stickhub-data-'));
-  const hub = await createHub({ root: ROOT, dataDir: data, port: 0, portRange: { from: 27280, to: 27289 }, home, startTimeoutMs: 6000,
-    stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, vault: { store: t.store } });
-  cleanups.push(async () => { await hub.close().catch(() => {}); for (const d of [home, data, t.root]) await rm(d, { recursive: true, force: true }); });
+  const hub = await createHub({ root: ROOT, dataDir: data, port: 0, portRange: { from: 27280, to: 27289 }, home: vf.home, startTimeoutMs: 6000,
+    stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, vault: { dir: vf.dir } });
+  cleanups.push(async () => { await hub.close().catch(() => {}); for (const d of [data, vf.root]) await rm(d, { recursive: true, force: true }); });
   await hub.listen();
+  await hub.vault.unlock('passphrase', vf.passphrase);
+  const t = { store: hub.vault.store };
   const tc = await hub.procman.start('tap-counter');
   for (let i = 0; i < 3; i++) await http(tc.port, '/tap', { method: 'POST' });
   assert.equal(JSON.parse(String(await t.store.read('tap-counter/count.json'))).count, 3);

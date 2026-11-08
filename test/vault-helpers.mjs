@@ -88,3 +88,22 @@ export async function makeTestStore(o = {}) {
   const store = await Store.create(dir, { headerText: v.text, dk: v.dk, ...o });
   return { v, root, dir, store };
 }
+
+/**
+ * A new vault folder on disk (closed), for a hub to open: the TEST ONLY passphrase (SMALL_KDF unless o.kdf) and paper code.
+ * @returns {Promise<{root: string, dir: string, home: string, passphrase: string, paperCode: string}>}
+ *   root: remove it when done; home: an empty ~/.stickhub for the hub
+ */
+export async function makeVaultFolder(o = {}) {
+  const { mkdtempSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Store } = await import('../hub/vault/store.mjs');
+  const v = await makeTestVault({ kdf: o.kdf });
+  const root = mkdtempSync(join(tmpdir(), 'stickhub-vaultdir-'));
+  const dir = join(root, 'vault');
+  const home = join(root, 'home');
+  mkdirSync(home);
+  await (await Store.create(dir, { headerText: v.text, dk: v.dk })).close();
+  return { root, dir, home, passphrase: v.passphrase, paperCode: v.paperCode };
+}

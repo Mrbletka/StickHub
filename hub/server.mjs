@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadEngines } from './engines.mjs';
 import { ProcessManager } from './procman.mjs';
 import { createApi, json } from './api.mjs';
+import { vaultRoutes } from './lock/routes.mjs';
 import { serveStatic, send } from './static-files.mjs';
 import { codeCommit } from './version.mjs';
 import { StickService } from './sync/service.mjs';
@@ -18,7 +19,8 @@ import { findStick } from './stick.mjs';
 import { LiveData } from './livedata.mjs';
 import { PidFile, cleanupLeftovers } from './proc.mjs';
 import { createDataApi } from './dataapi/server.mjs';
-import { readPassphrase, openDevVault, EXIT_WRONG_PASSPHRASE } from './devvault.mjs';
+import { readPassphrase, EXIT_WRONG_PASSPHRASE } from './devvault.mjs';
+import { VaultService } from './lock/service.mjs';
 
 export const HUB_PORT = 8787;
 const HUB_DIR = dirname(fileURLToPath(import.meta.url));
@@ -30,11 +32,12 @@ const ROOT = dirname(HUB_DIR);
  *   portRange?: {from: number, to: number}, startTimeoutMs?: number,
  *   stick?: {listVolumes?: Function, pollMs?: number, autoSync?: boolean, device?: string, git?: object},
  *   home?: string, shutdown?: () => void, dataOnStick?: boolean | {listVolumes?: Function, pollMs?: number},
- *   vault?: {store: import('./vault/store.mjs').Store, socketPath?: string}}} [opts]
+ *   vault?: {dir?: string, socketPath?: string, autoLockSeconds?: number, clock?: object, open?: Function, storeOpts?: object}}} [opts]
  *   stick: options for the stick service (tests pass fakes); home: private folder (token, app PIDs)
  *   dataOnStick: app data lives on the stick (HUB/data/<id>); the code still runs from here (see livedata.mjs)
- *   vault: an open store (DEV ONLY until job 4). The hub serves it on the data API (default <home>/run/data.sock),
- *   apps with "data": "hubfs" get the socket and a token, the plain data sync is off, and close() closes the store.
+ *   vault: the vault folder (default <home>/vault-dev) and test hooks. With a vault.json there the hub starts LOCKED:
+ *   no app starts until the lock screen opens it; then apps with "data": "hubfs" get the data socket (default
+ *   <home>/run/data.sock) and a token, and the plain data sync stays off. No vault.json: plain data, as before.
  */
 export async function createHub(opts = {}) {
   const root = opts.root || ROOT;
@@ -46,12 +49,19 @@ export async function createHub(opts = {}) {
   const pidPath = join(home, 'apps-running.json');
   // Apps left running by an earlier hub that was killed hard: stop them first (only if their command line matches).
   for (const line of await cleanupLeftovers(pidPath)) console.log(`leftover ${line}`);
-  if (opts.vault && opts.dataOnStick) throw new Error('The vault and data on the stick do not go together yet.');
-  const vault = opts.vault || null;
-  const dataApi = vault ? await createDataApi({ socketPath: vault.socketPath || join(home, 'run', 'data.sock'), getStore: () => vault.store }) : null;
+  const vo = opts.vault || {};
+  const service = await new VaultService({ dir: vo.dir || join(home, 'vault-dev'), home, clock: vo.clock, open: vo.open, storeOpts: vo.storeOpts,
+    autoLockSeconds: vo.autoLockSeconds ?? opts.autoLockSeconds }).init();
+  const vault = service.exists ? service : null; // no vault.json: plain data, no lock screen
+  if (vault && opts.dataOnStick) {
+    throw new Error(`There is a vault in ${service.dir} and data on the stick is on: they do not work together yet. `
+      + 'Turn dataOnStick off in ~/.stickhub/settings.json (or start without --data-on-stick).');
+  }
+  const dataApi = vault ? await createDataApi({ socketPath: vo.socketPath || join(home, 'run', 'data.sock'), getStore: () => vault.store }) : null;
   const procman = new ProcessManager({
     engines, appsDir: opts.appsDir || join(root, 'apps'), dataDir: opts.dataDir || join(root, 'data'),
     portRange: opts.portRange, startTimeoutMs: opts.startTimeoutMs, pidFile: new PidFile(pidPath), dataApi,
+    startBlock: vault ? () => (vault.unlocked ? null : 'The vault is locked. Unlock it on the hub page first.') : null,
   });
   await procman.reload();
   const commit = await codeCommit(root).catch(() => null);
@@ -66,15 +76,12 @@ export async function createHub(opts = {}) {
     device: () => opts.stick?.device || deviceId(home), onAttach: () => stick.syncNow('code'),
   }) : null;
   const mode = { mode: dos ? 'data-on-stick' : 'phone', vault: !!vault };
-  const vaultStatus = () => {
-    if (!vault) return { on: false };
-    const v = vault.store.status(); // counts only, never a name
-    return { on: true, dev: true, files: v.files, problems: v.problems.length, closed: v.closed };
-  };
   const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status(), mode: mode.mode,
-    live: live ? live.status() : { on: false }, vault: vaultStatus() });
-  const api = createApi({ procman, stick, status, token, codes, mode, shutdown: () => opts.shutdown?.() });
+    live: live ? live.status() : { on: false }, vault: vault ? { on: true, ...vault.status() } : { on: false } });
+  const api = createApi({ procman, stick, status, token, codes, mode, shutdown: () => opts.shutdown?.(),
+    vaultRoutes: vault ? vaultRoutes(vault, json) : null });
   live?.on('change', () => api.broadcastStatus());
+  vault?.on('change', () => api.broadcastStatus());
   procman.beforeStop = (views) => api.clearApps(views); // browser storage of the apps goes before they stop
   const uiDir = join(HUB_DIR, 'ui');
 
@@ -103,7 +110,7 @@ export async function createHub(opts = {}) {
   });
 
   return {
-    server, procman, stick, token, codes, home, mode, live, dataApi,
+    server, procman, stick, token, codes, home, mode, live, dataApi, vault,
     /** Start listening, then start watching for the stick. Rejects with EADDRINUSE when the port is taken. */
     listen: () => new Promise((resolve, reject) => {
       server.once('error', reject);
@@ -114,16 +121,16 @@ export async function createHub(opts = {}) {
         resolve(`http://127.0.0.1:${server.address().port}/`);
       });
     }),
-    /** Stop syncing, all apps and the server; then the data API, then the store (it waits for its running step). */
+    /** Stop syncing; lock the vault (it stops the apps); stop the rest, the server and the data API. */
     async close() {
       await stick.stop();
+      await vault?.lock('stop');
       await procman.stopAll();
       await live?.stop();
       api.close();
       server.closeAllConnections();
       await new Promise((r) => server.close(() => r()));
       await dataApi?.close();
-      await vault?.store.close();
     },
   };
 }
@@ -140,28 +147,23 @@ async function main() {
       process.exit(1);
     }
   }
-  // DEV ONLY (job 4 replaces it): `node hub/cli.mjs open --vault` sets HUB_DEV_VAULT (a folder) and sends the
-  // passphrase on stdin. The store then lives only in this process's memory.
+  // DEV ONLY until the lock screen (job 4, commit 3 removes it): `node hub/cli.mjs open --vault` sets HUB_DEV_VAULT (a
+  // folder) and sends the passphrase on stdin; the hub then unlocks through the vault service.
   const vaultDir = process.env.HUB_DEV_VAULT;
   delete process.env.HUB_DEV_VAULT;
-  let vault = null;
-  if (vaultDir) {
-    if (dataOnStick) { console.error('Vault (dev): data on the stick is not supported with the vault yet. Turn dataOnStick off.'); process.exit(2); }
-    try {
-      vault = { store: await openDevVault(vaultDir, await readPassphrase(process.stdin)) };
-    } catch (e) {
-      if (e.code === 'WRONG_SECRET') { console.error('Vault (dev): wrong passphrase.'); process.exit(EXIT_WRONG_PASSPHRASE); }
-      console.error(`Vault (dev): ${e.code === 'BAD_INPUT' ? 'no passphrase given.' : e.message}`);
-      process.exit(1);
-    }
-  }
+  const devPass = vaultDir ? await readPassphrase(process.stdin) : null;
   let shutdown = () => {};
-  let hub;
-  try {
-    hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0), dataOnStick, vault });
-  } catch (e) {
-    await vault?.store.close();
-    throw e;
+  const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0), dataOnStick,
+    ...(vaultDir ? { vault: { dir: vaultDir } } : {}), autoLockSeconds: settings.autoLockSeconds });
+  if (devPass !== null) {
+    if (!hub.vault) { console.error('Vault (dev): there is no vault in that folder.'); process.exit(1); }
+    try {
+      await hub.vault.unlock('passphrase', devPass);
+    } catch (e) {
+      console.error(`Vault (dev): ${e.code === 'WRONG' ? 'wrong passphrase.' : e.message}`);
+      await hub.dataApi?.close();
+      process.exit(e.code === 'WRONG' ? EXIT_WRONG_PASSPHRASE : 1);
+    }
   }
   for (const e of hub.procman.list()) if (e.problems.length) console.warn(`app ${e.id}: ${e.problems.join('; ')}`);
   let url;
@@ -170,13 +172,13 @@ async function main() {
   } catch (e) {
     if (e.code === 'EADDRINUSE') {
       console.error(`Port ${HUB_PORT} is in use. Is the hub already running? Open http://127.0.0.1:${HUB_PORT}/`);
+      await hub.vault?.lock('stop');
       await hub.dataApi?.close();
-      await vault?.store.close();
       process.exit(1);
     }
     throw e;
   }
-  console.log(`StickHub running: ${url}  (${hub.procman.list().length} apps${dataOnStick ? ', data on the stick' : ''}${vault ? ', vault open (DEV ONLY)' : ''}, Ctrl+C to stop)`);
+  console.log(`StickHub running: ${url}  (${hub.procman.list().length} apps${dataOnStick ? ', data on the stick' : ''}${hub.vault ? `, vault ${hub.vault.state}` : ''}, Ctrl+C to stop)`);
 
   let closing = false;
   shutdown = async (code = 0) => {

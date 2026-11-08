@@ -6,7 +6,7 @@ import { createHub } from '../hub/server.mjs';
 import { exists } from '../hub/sync/fsx.mjs';
 import { setup, write, gitc } from './sync-helpers.mjs';
 import { http } from './helpers.mjs';
-import { makeTestStore } from './vault-helpers.mjs';
+import { makeVaultFolder } from './vault-helpers.mjs';
 
 async function until(check, ms = 8000) {
   const end = Date.now() + ms;
@@ -72,10 +72,10 @@ test('hub: plug-in sync, Sync now, pending while an app runs, sync after it stop
 
 test('hub with the vault on: plug-in and Sync now copy code only; the plain data sync never touches data/', async () => {
   const fx = await setup();
-  const t = await makeTestStore();
+  const vf = await makeVaultFolder();
   let volumes = [];
-  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27161, to: 27165 }, vault: { store: t.store },
-    stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000ab' }, home: join(fx.base, 'home') });
+  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27161, to: 27165 }, vault: { dir: vf.dir },
+    stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000ab' }, home: vf.home });
   const port = Number(new URL(await hub.listen()).port);
   const auth = { 'x-hub-token': hub.token };
   const stick = async () => JSON.parse((await http(port, '/api/stick', { headers: auth })).body);
@@ -94,6 +94,6 @@ test('hub with the vault on: plug-in and Sync now copy code only; the plain data
   } finally {
     await hub.close();
     await fx.cleanup();
-    await rm(t.root, { recursive: true, force: true });
+    await rm(vf.root, { recursive: true, force: true });
   }
 });

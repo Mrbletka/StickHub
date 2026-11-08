@@ -282,13 +282,10 @@ export class Store {
    * Wait for the running step and for everything callers queued (saves, explicit tasks); automatic steps that have
    * not started are dropped and maintenance chains stop after their current step. Then forget the keys.
    */
-  async close() {
-    this.#closing = true;
-    this.#queue.dropBackground();
-    await this.#queue.idle();
-    this.#closed = true;
-    this.#wipe();
-  }
+  async close() { await this.flush(); this.#closed = true; this.#wipe(); }
+
+  /** Finish the running step and everything callers queued (automatic steps not started are dropped); keep the keys. */
+  async flush() { this.#closing = true; this.#queue.dropBackground(); await this.#queue.idle(); }
 
   #wipe() {
     zero(this.#dk, this.#keys?.header, this.#keys?.contentId, this.#keys?.file);
