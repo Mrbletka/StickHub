@@ -131,7 +131,7 @@ function socketPrimitives(socketPath, token, o = {}) {
   const limit = limiter(o.maxInFlight ?? 8);
   // One request on its own connection. Every request ends within timeoutMs: a stalled one fails with EIO
   // (hubCode TIMEOUT) and frees its place. A write that timed out may still have landed.
-  const send = (method, route, { json, body, query = '', headers = {} } = {}) => new Promise((ok, fail) => {
+  const send = (method, route, { json, body, query = '', headers = {}, signal } = {}) => new Promise((ok, fail) => {
     const payload = body ?? (json ? Buffer.from(JSON.stringify(json)) : null);
     const req = http.request({ socketPath, method, path: `/v1/${route}${query}`, agent: false,
       headers: { authorization: `Bearer ${tok()}`, ...(payload ? { 'content-length': payload.length } : {}), ...headers } }, (res) => {
@@ -150,6 +150,7 @@ function socketPrimitives(socketPath, token, o = {}) {
     });
     const timer = setTimeout(() => { req.destroy(); fail(hubError('TIMEOUT', 'The hub did not answer in time.')); }, timeoutMs);
     req.on('error', (e) => { clearTimeout(timer); fail(hubError('IO', `The hub cannot be reached (${e.code || 'error'}).`)); });
+    signal?.addEventListener('abort', () => req.destroy(), { once: true }); // a stopped watch ends its long poll at once
     req.end(payload ?? undefined);
   });
   const call = (method, route, o2 = {}) => limit(o2.keys || [], () => send(method, route, o2));
@@ -172,8 +173,9 @@ function socketPrimitives(socketPath, token, o = {}) {
         let r;
         try {
           // the long poll has its own connection, outside the limit: a watch must never hold back reads and writes
-          r = JSON.parse((await send('GET', 'events', { query: since === null ? '' : `?since=${since}` })).buf.toString('utf8'));
+          r = JSON.parse((await send('GET', 'events', { query: since === null ? '' : `?since=${since}`, signal: o.signal })).buf.toString('utf8'));
         } catch (e) {
+          if (o.signal?.aborted) return;
           if (e.hubCode === 'UNAUTHORIZED' || e.hubCode === 'LOCKED') throw e; // anything else: the hub is away, retry
           await new Promise((res) => setTimeout(res, o.retryMs ?? 1000));
           continue;
@@ -198,18 +200,32 @@ function filePrimitives(root) {
     return map[e.code] ? hubError(map[e.code], 'File operation failed.') : e.hubCode ? e : hubError('IO', 'File operation failed.');
   };
   const idOf = (buf) => createHash('sha256').update(buf).digest('base64url');
-  // meta: from fs.stat only, never reads the file. entry: meta plus the content id (reads the file).
-  const meta = async (p) => {
-    const st = await fsp.stat(abs(p)).catch((e) => { throw io(e); });
-    return st.isDirectory() ? { path: p, kind: 'd', mtime: st.mtimeMs } : { path: p, kind: 'f', size: st.size, mtime: st.mtimeMs };
+  /** A link anywhere on the way is refused (EINVAL): links are never followed out of the data folder. */
+  async function noLinks(p) {
+    let cur = root;
+    for (const seg of p.split('/')) {
+      cur = join(cur, seg);
+      let st;
+      try { st = await fsp.lstat(cur); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return; throw io(e); }
+      if (st.isSymbolicLink()) throw hubError('BAD_PATH', 'Links are not followed.');
+    }
+  }
+  // lmeta: from lstat only, never reads the file (for names a directory read gave). meta: lmeta after the link check.
+  // entry: meta plus the content id (reads the file).
+  const lmeta = async (p) => {
+    const st = await fsp.lstat(abs(p)).catch((e) => { throw io(e); });
+    if (st.isDirectory()) return { path: p, kind: 'd', mtime: st.mtimeMs };
+    if (!st.isFile()) throw hubError('NOT_FOUND', 'File operation failed.'); // a link or a device: not part of the data
+    return { path: p, kind: 'f', size: st.size, mtime: st.mtimeMs };
   };
+  const meta = async (p) => { await noLinks(p); return lmeta(p); };
   const entry = async (p) => {
     const m = await meta(p);
     return m.kind === 'd' ? m : { ...m, id: idOf(await fsp.readFile(abs(p)).catch((e) => { throw io(e); })) };
   };
   const kindOf = (d) => (d.isDirectory() ? 'd' : d.isFile() ? 'f' : null); // links and others are left out
-  /** One directory read: [{name, kind}], sorted by name; *.part files are hidden. */
-  async function list(base) {
+  /** One directory read: [{name, kind}], sorted by name; *.part files and links are left out. */
+  async function listRaw(base) {
     let items;
     try { items = await fsp.readdir(base ? abs(base) : root, { withFileTypes: true }); } catch (e) {
       if (e.code === 'ENOENT' && !base) return []; // nothing saved yet
@@ -218,17 +234,21 @@ function filePrimitives(root) {
     return items.filter((it) => kindOf(it) && !it.name.endsWith('.part')).map((it) => ({ name: it.name, kind: kindOf(it) }))
       .sort((x, y) => (x.name < y.name ? -1 : 1));
   }
+  const list = async (base) => { if (base) await noLinks(base); return listRaw(base); };
   async function walk(base, depth, out) {
-    for (const it of await list(base)) {
+    for (const it of await listRaw(base)) {
       const p = base ? `${base}/${it.name}` : it.name;
-      out.push(await meta(p).catch((e) => { if (e.code === 'ENOENT') return null; throw e; })); // gone meanwhile: skip
+      out.push(await lmeta(p).catch((e) => { if (e.code === 'ENOENT') return null; throw e; })); // gone meanwhile: skip
       if (it.kind === 'd' && (depth === undefined || depth > 1)) await walk(p, depth && depth - 1, out);
     }
     return out;
   }
   const exists = (p) => fsp.lstat(abs(p)).then(() => true, () => false);
   return {
-    tree: async (prefix, depth) => (await walk(prefix, depth, [])).filter(Boolean).sort((x, y) => (x.path < y.path ? -1 : 1)),
+    tree: async (prefix, depth) => {
+      if (prefix) await noLinks(prefix);
+      return (await walk(prefix, depth, [])).filter(Boolean).sort((x, y) => (x.path < y.path ? -1 : 1));
+    },
     list,
     stat: entry,
     read: async (p) => {
@@ -249,6 +269,7 @@ function filePrimitives(root) {
       return { id, size: buf.length };
     },
     async mkdirp(p) {
+      await noLinks(p);
       if (await exists(p) && (await meta(p)).kind !== 'd') throw hubError('EXISTS', 'A file with that name exists.');
       await fsp.mkdir(abs(p), { recursive: true }).catch((e) => { throw io(e); });
       emit({ kind: 'mkdir', path: p });
@@ -256,6 +277,7 @@ function filePrimitives(root) {
     },
     async move(from, to) {
       await meta(from);
+      await noLinks(to);
       if (from === to) return {};
       if (to.startsWith(`${from}/`)) throw hubError('BAD_PATH', 'A folder cannot move into itself.');
       if (await exists(to)) throw hubError('EXISTS', 'Something with that name exists.');

@@ -42,8 +42,8 @@ test('the check itself catches the patterns it is meant to', () => {
 });
 
 const HUBFS = join(ROOT, 'hub', 'appkit', 'hubfs.mjs');
-// Not ported to hubfs yet (they cannot start while the vault is on). Job 3c removes them one by one.
-const NOT_PORTED = new Set(['notebook']);
+// Not ported to hubfs yet (they cannot start while the vault is on). Empty since job 3c: keep it that way.
+const NOT_PORTED = new Set([]);
 // The only files that may use localStorage, and what for (UI state, never data).
 const UI_STATE_FILES = { 'notebook/public/js/store.mjs': 'open tabs, open folders, sort, recent notes' };
 

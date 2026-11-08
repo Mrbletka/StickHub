@@ -4,12 +4,13 @@ export class ApiError extends Error {
   constructor(status, message, body) { super(message); this.status = status; this.body = body; }
 }
 
-async function call(method, path, body) {
+async function call(method, path, body, signal) {
   let res;
   try {
-    res = await fetch(path, { method, cache: 'no-store', headers: body ? { 'content-type': 'application/json' } : {},
+    res = await fetch(path, { method, cache: 'no-store', headers: body ? { 'content-type': 'application/json' } : {}, signal,
       body: body ? JSON.stringify(body) : undefined, keepalive: method !== 'GET' && body && JSON.stringify(body).length < 60_000 });
   } catch (e) {
+    if (signal?.aborted) throw e;
     throw new ApiError(0, 'The Notebook server is not reachable.', null);
   }
   const data = await res.json().catch(() => ({}));
@@ -32,4 +33,6 @@ export const api = {
   remove: (paths) => call('POST', 'api/delete', { paths }),
   restore: (id) => call('POST', 'api/restore', { id }),
   emptyDeleted: () => call('POST', 'api/empty-deleted', {}),
+  /** Notes changed since a cursor (waits up to 20 s): {cursor, lost, paths}. */
+  changes: (cursor, signal) => call('GET', `api/changes?${q({ cursor: cursor || '' })}`, undefined, signal),
 };

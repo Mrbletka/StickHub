@@ -1,6 +1,7 @@
-// Notebook: StickHub app (engine node-server). Notes are plain files in HUB_DATA_DIR/vault.
-// Runs on its own too:  PORT=4110 node server.mjs   (then the vault is ./data/vault)
-// App rules: listen on process.env.PORT at 127.0.0.1, data only in HUB_DATA_DIR, stop cleanly on SIGTERM.
+// Notebook: StickHub app (engine node-server). Notes are files under "vault/" in the app's data, kept through
+// lib/hubfs.mjs: the hub's encrypted vault when the hub gives a data socket, plain files otherwise.
+// Runs on its own too, from this folder:  PORT=4110 node server.mjs   (then the notes are ./data/vault)
+// App rules: listen on process.env.PORT at 127.0.0.1, data only through hubfs, stop cleanly on SIGTERM.
 // Security: checks Host, Origin on every write and Sec-Fetch-Site; no CORS headers; every path stays in the vault.
 
 import { createServer } from 'node:http';
@@ -9,9 +10,10 @@ import { lstat } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { join, extname, sep } from 'node:path';
 import { Vault, VaultError, MAX_NOTE } from './lib/vault.mjs';
+import { Changes } from './lib/changes.mjs';
+import { createHubFs } from './lib/hubfs.mjs';
 
 const PORT = Number(process.env.PORT) || 4110;
-const DATA_DIR = process.env.HUB_DATA_DIR || join(import.meta.dirname, 'data');
 const PUBLIC = join(import.meta.dirname, 'public');
 const MAX_BODY = MAX_NOTE + 64 * 1024;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -24,8 +26,9 @@ const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-
  * Build the request handler (tests create their own server with it).
  * @param {Vault} vault
  * @param {() => number} port  the port we listen on (for the Host and Origin checks)
+ * @param {Changes} [changes]  note changes for "changed somewhere else" (GET /api/changes)
  */
-export function createHandler(vault, port) {
+export function createHandler(vault, port, changes) {
   return async (req, res) => {
     try {
       const p = port();
@@ -36,7 +39,7 @@ export function createHandler(vault, port) {
         const site = req.headers['sec-fetch-site'];
         if (site && site !== 'same-origin' && site !== 'none') return send(res, 403, { error: 'Cross-site request refused.' });
         if (req.method !== 'GET' && !hosts.some((h) => req.headers.origin === `http://${h}`)) return send(res, 403, { error: 'Wrong origin.' });
-        return await api(vault, req, res, url);
+        return await api(vault, req, res, url, changes);
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed.' });
       return await serveFile(res, url.pathname);
@@ -51,9 +54,10 @@ export function createHandler(vault, port) {
   };
 }
 
-async function api(vault, req, res, url) {
+async function api(vault, req, res, url, changes) {
   const q = (k) => url.searchParams.get(k) ?? '';
   const r = `${req.method} ${url.pathname}`;
+  if (r === 'GET /api/changes' && changes) return send(res, 200, await changes.wait(q('cursor')));
   if (r === 'GET /api/list') return send(res, 200, { path: q('path'), entries: await vault.list(q('path')) });
   if (r === 'GET /api/index') return send(res, 200, await vault.index());
   if (r === 'GET /api/note') return send(res, 200, await vault.read(q('path')));
@@ -112,11 +116,16 @@ function send(res, status, body) {
 }
 
 async function main() {
-  const vault = await Vault.open(join(DATA_DIR, 'vault'));
-  const server = createServer(createHandler(vault, () => server.address().port));
-  server.listen(PORT, '127.0.0.1', () => console.log(`Notebook on http://127.0.0.1:${PORT}/ (vault: ${vault.root})`));
+  const fs = createHubFs();
+  const vault = new Vault(fs);
+  const changes = new Changes(fs);
+  changes.start();
+  const server = createServer(createHandler(vault, () => server.address().port, changes));
+  // No folder, socket or token in the log: only which kind of storage.
+  server.listen(PORT, '127.0.0.1', () => console.log(`Notebook on http://127.0.0.1:${PORT}/ (notes: ${fs.mode === 'hub' ? 'the hub vault' : 'plain files'})`));
   // The hub stops apps with SIGTERM (then SIGKILL after 3 s). Writes are atomic, so stopping mid-save is safe.
   process.on('SIGTERM', () => {
+    changes.stop();
     server.close(() => process.exit(0));
     server.closeIdleConnections();
     setTimeout(() => process.exit(0), 2000).unref();

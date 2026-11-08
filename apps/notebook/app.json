@@ -1,11 +1,12 @@
 {
   "id": "notebook",
   "name": "Notebook",
-  "description": "Notes as plain files in folders, with an Explorer. Syncs with the stick file by file.",
+  "description": "Notes in folders, with an Explorer. In the hub vault (encrypted) or as plain files.",
   "icon": "icon.svg",
   "engine": "node-server",
   "entry": "server.mjs",
   "port": 4110,
+  "data": "hubfs",
   "atomicData": true,
   "version": "0.1.0"
 }

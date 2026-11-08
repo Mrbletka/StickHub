@@ -1,7 +1,7 @@
 // File and folder name rules, shared by the server (authority) and the browser (instant feedback).
 // Names must work on exFAT (the stick) and Windows: the vault syncs file by file and opens anywhere.
 
-export const MAX_NAME = 200;
+export const MAX_NAME = 120; // the vault's limit for one name (the whole path: 194)
 const BAD_CHARS = /[/\\:*?"<>|\u0000-\u001f\u007f]/;
 const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\..*)?$/i;
 

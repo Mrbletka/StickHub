@@ -143,3 +143,27 @@ test('plain-file mode: readdir and tree never read a file', async () => {
     Object.assign(fsp, orig);
   }
 });
+
+test('plain-file mode: links are never followed, listed or written through', async () => {
+  const { symlink, writeFile: put, mkdir: md } = fsp;
+  const base = tmp();
+  const dir = join(base, 'data');
+  await md(join(base, 'outside'), { recursive: true });
+  await put(join(base, 'outside', 'secret.md'), 'secret');
+  await md(dir);
+  await symlink(join(base, 'outside'), join(dir, 'linkdir'));
+  await symlink(join(base, 'outside', 'secret.md'), join(dir, 'link.md'));
+  const fs = createHubFs({ dir, socket: '', token: '' });
+  for (const p of ['linkdir/secret.md', 'link.md']) {
+    await assert.rejects(fs.readFile(p), (e) => e.code === 'EINVAL' || e.code === 'ENOENT', p);
+    await assert.rejects(fs.stat(p), (e) => e.code === 'EINVAL' || e.code === 'ENOENT', p);
+  }
+  await assert.rejects(fs.writeFile('linkdir/new.md', 'x'), { code: 'EINVAL' });
+  await assert.rejects(fs.mkdir('linkdir/sub', { recursive: true }), { code: 'EINVAL' });
+  await assert.rejects(fs.readdir('linkdir'), { code: 'EINVAL' });
+  await fs.writeFile('real.md', 'mine');
+  await assert.rejects(fs.rename('real.md', 'linkdir/real.md'), { code: 'EINVAL' });
+  assert.deepEqual(await fs.readdir(''), ['real.md'], 'links are not listed');
+  assert.deepEqual((await fs.tree('')).map((e) => e.path), ['real.md']);
+  assert.deepEqual((await fsp.readdir(join(base, 'outside'))).sort(), ['secret.md'], 'nothing written outside');
+});

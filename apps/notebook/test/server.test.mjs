@@ -1,20 +1,28 @@
-import { test, before, after } from 'node:test';
+// The Notebook server (guards, API, page) in both modes: plain files and the hub's vault (TEST ONLY keys).
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, request } from 'node:http';
-import { mkdtemp } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { Vault } from '../lib/vault.mjs';
+import { Changes } from '../lib/changes.mjs';
 import { createHandler } from '../server.mjs';
+import { MODES } from './modes.mjs';
 
-let server, port;
+for (const [mode, make] of Object.entries(MODES)) describe(mode, () => {
+let server, port, m, changes;
 before(async () => {
-  const vault = await Vault.open(join(await mkdtemp(join(tmpdir(), 'notebook-srv-')), 'vault'));
-  server = createServer(createHandler(vault, () => port));
+  m = await make();
+  changes = new Changes(m.fs, { retryMs: 50, log: () => {} });
+  changes.start();
+  server = createServer(createHandler(new Vault(m.fs), () => port, changes));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   port = server.address().port;
 });
-after(() => server.close());
+after(async () => {
+  changes.stop();
+  server.closeAllConnections();
+  await new Promise((r) => server.close(r));
+  await m.done();
+});
 
 function call(path, { method = 'GET', body, headers = {} } = {}) {
   return new Promise((resolve, reject) => {
@@ -61,3 +69,28 @@ test('the page has a strict CSP and may be framed only by the hub', async () => 
   assert.equal((await call('/../server.mjs')).status, 404);
   assert.equal((await call('/js/names.mjs')).headers['content-type'], 'text/javascript; charset=utf-8');
 });
+
+test('changes: the page learns about a change made through the data; a stale cursor means "list again"', async () => {
+  const first = (await call('/api/changes')).body;
+  assert.equal(first.lost, false);
+  const waiting = call(`/api/changes?cursor=${encodeURIComponent(first.cursor)}`);
+  await new Promise((r) => setTimeout(r, 100));
+  await m.fs.writeFile('vault/from-elsewhere.md', 'hi');
+  const got = (await waiting).body;
+  assert.deepEqual([got.lost, got.paths], [false, ['from-elsewhere.md']]);
+  assert.equal((await call('/api/changes?cursor=00000000:0')).body.lost, true);
+});
+
+if (mode === 'hub') {
+  test('the hub gone: errors say so, with no socket path, vault folder or token', async () => {
+    await m.api.close();
+    for (const path of ['/api/list?path=', '/api/note?path=n.md', '/api/index']) {
+      const r = await call(path);
+      assert.equal(r.status, 503, path);
+      const text = JSON.stringify(r.body);
+      for (const secret of [m.api.socketPath, m.token, m.base, 'data.sock']) assert.ok(!text.includes(secret), text);
+    }
+  });
+}
+});
+

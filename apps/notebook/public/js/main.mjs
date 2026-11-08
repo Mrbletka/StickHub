@@ -309,8 +309,34 @@ async function checkOutside() {
   try { await tree.refresh(); await editor.checkOutside(); } catch (e) { toast(e.message, true); }
 }
 addEventListener('focus', checkOutside);
-document.addEventListener('visibilitychange', () => { if (document.hidden) editor.saveAll(); else checkOutside(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { editor.saveAll(); live?.abort(); } else { checkOutside(); follow(); }
+});
 addEventListener('pagehide', () => editor.saveAll());
+
+// Changes from the hub while the page is visible (design 8.5): one long poll at a time; a change or "lost" (list
+// again) runs the same check as a focus. Without the hub (plain files) this sees only this Notebook's own saves,
+// so the focus check above stays.
+let cursor = null;
+let live = null;
+async function follow() {
+  if (live || document.hidden) return;
+  const ac = new AbortController();
+  live = ac;
+  try {
+    while (!ac.signal.aborted) {
+      const r = await api.changes(cursor, ac.signal);
+      const first = cursor === null;
+      cursor = r.cursor;
+      if (!first && (r.lost || r.paths.length)) { lastCheck = 0; await checkOutside(); }
+    }
+  } catch {
+    // the server is away (restarting?) or the page went hidden: try again in 5 s while the page is visible
+    if (!ac.signal.aborted) setTimeout(follow, 5000);
+  } finally {
+    if (live === ac) live = null;
+  }
+}
 
 // ---------- start ----------
 (async () => {
@@ -318,6 +344,7 @@ addEventListener('pagehide', () => editor.saveAll());
     await tree.init();
     await editor.restore();
     if (!editor.tabs.length && !wide.matches) openDrawer();
+    follow();
   } catch (e) {
     $('tree').innerHTML = `<div class="hint">Could not load the vault: ${esc(e.message)}</div>`;
   }

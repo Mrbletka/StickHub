@@ -210,7 +210,8 @@ A finished phase is recorded here with its commit hash (no git tags).
    hub/portable-check.mjs first.
 
 Now: real apps, one at a time, built inside the hub with `node hub/cli.mjs new` (see "Making apps").
-- App #1 Notebook (apps/notebook): notes as plain files in HUB_DATA_DIR/vault, VS Code-style Explorer. See its README.
+- App #1 Notebook (apps/notebook): notes under vault/ through hubfs (the hub's vault, or plain files), VS Code-style
+  Explorer. See its README.
   **Done: 09c5942** (tested on the phone 2026-11-04). Later: full-text search, tags, pins, [[wiki links]], conflict compare view.
 
 Encrypted vault: docs/VAULT-DESIGN.md (reviewed; decisions in its section 0, build order in section 11).
@@ -239,7 +240,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   **done**. 1 dev vault (`vault dev-create`, `open --vault`, hub/devvault.mjs, DEV ONLY), data API in the hub,
   procman tokens, `"data"` in app.json, close order: **done**. Fix of two flaky tests (the rare hang of
   `node --test`): **done**. 2 scaffold copies hubfs + app-rules + no plain data sync in vault mode (`sync status`):
-  **done**. 3 tap-counter on hubfs (pocket-timer is static, needs nothing): **done**. Still to do: 4 Notebook;
+  **done**. 3 tap-counter on hubfs (pocket-timer is static, needs nothing): **done**. 4 Notebook on hubfs (one tree() for list
+  and index, ifMatch, moves, watch() via GET /api/changes, tests in both modes, names max 120, lib/atomic.mjs gone;
+  hubfs plain mode never follows links; a stopped watch() ends its long poll at once): **done**. Still to do:
   5 `/__hub/clear` + probe 12; docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
