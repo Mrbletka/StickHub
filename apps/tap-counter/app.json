@@ -1,10 +1,11 @@
 {
   "id": "tap-counter",
   "name": "Tap Counter",
-  "description": "Sample node-server app. Counts taps and saves them in its data folder.",
+  "description": "Sample node-server app. Counts taps and saves them through hubfs (the vault, or plain files).",
   "icon": "icon.svg",
   "engine": "node-server",
   "entry": "server.mjs",
   "port": "auto",
+  "data": "hubfs",
   "version": "0.1.0"
 }

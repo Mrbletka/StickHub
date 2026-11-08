@@ -239,7 +239,8 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   **done**. 1 dev vault (`vault dev-create`, `open --vault`, hub/devvault.mjs, DEV ONLY), data API in the hub,
   procman tokens, `"data"` in app.json, close order: **done**. Fix of two flaky tests (the rare hang of
   `node --test`): **done**. 2 scaffold copies hubfs + app-rules + no plain data sync in vault mode (`sync status`):
-  **done**. Still to do: 3 tap-counter; 4 Notebook; 5 `/__hub/clear` + probe 12; docs.
+  **done**. 3 tap-counter on hubfs (pocket-timer is static, needs nothing): **done**. Still to do: 4 Notebook;
+  5 `/__hub/clear` + probe 12; docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

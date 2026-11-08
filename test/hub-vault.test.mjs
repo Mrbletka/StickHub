@@ -169,3 +169,24 @@ test('node hub/server.mjs with HUB_DEV_VAULT: passphrase from stdin; wrong = exi
   assert.equal(await ok.exit, 0);
   assert.equal(existsSync(join(home, 'run', 'data.sock')), false);
 });
+
+test('the real sample apps with the vault on: tap-counter counts into the vault, pocket-timer needs nothing', async () => {
+  const t = await makeTestStore();
+  const home = await mkdtemp(join(tmpdir(), 'stickhub-home-'));
+  const data = await mkdtemp(join(tmpdir(), 'stickhub-data-'));
+  const hub = await createHub({ root: ROOT, dataDir: data, port: 0, portRange: { from: 47280, to: 47289 }, home, startTimeoutMs: 6000,
+    stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, vault: { store: t.store } });
+  cleanups.push(async () => { await hub.close().catch(() => {}); for (const d of [home, data, t.root]) await rm(d, { recursive: true, force: true }); });
+  await hub.listen();
+  const tc = await hub.procman.start('tap-counter');
+  for (let i = 0; i < 3; i++) await http(tc.port, '/tap', { method: 'POST' });
+  assert.equal(JSON.parse(String(await t.store.read('tap-counter/count.json'))).count, 3);
+  await hub.procman.restart('tap-counter');
+  const again = hub.procman.view('tap-counter');
+  assert.match((await http(again.port, '/')).body, /<button id="b">3<\/button>/, 'the count survives a restart');
+  assert.equal(JSON.parse((await http(again.port, '/tap', { method: 'POST' })).body).count, 4);
+  const pt = await hub.procman.start('pocket-timer');
+  assert.match((await http(pt.port, '/')).body, /Pocket Timer/);
+  assert.deepEqual(hub.procman.view('pocket-timer').problems, []);
+  assert.deepEqual(await (await import('node:fs/promises')).readdir(data), [], 'nothing written as plain files');
+});
