@@ -1,7 +1,7 @@
 # Encrypted vault: design (reviewed)
 
 Status: reviewed by Claude and Fabian on 2026-11-04; the decisions are in section 0 and are folded into the sections
-below. **Being built** in the order of section 11: steps 1-3 are built (step 3 with a DEV ONLY unlock until step 4).
+below. **Being built** in the order of section 11: steps 1-4 are built (v1 step 4, the lock screen, in job 4).
 Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, runs 7 and 8) and are marked
 **(p9)**. Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet.
 
@@ -366,6 +366,19 @@ Writes: header (2 copies) on both sides, packs and index on both sides, the back
 4. Phone copy mode needs no stick to unlock. After unlocking, a plugged-in stick syncs in the background.
 The header copy on the phone lets the unlock start before the stick is even seen.
 
+**Built (job 4, v1):** `hub/lock/service.mjs`. With a `vault.json` in the vault folder the hub always starts locked;
+without one it works with plain data and has no lock screen. Unlocking happens only on the hub page's lock screen
+(`hub/ui/vaultlock.js`): **Passphrase** or **Paper code**, sent to `POST /api/vault/unlock` (same Host, Origin,
+Sec-Fetch-Site and token checks as every API route; body at most 4 KiB, zeroed after parsing). One unlock at a time
+(another one: 429); Argon2id runs on Node's async API, so the hub keeps answering (probe 13). A lock while the key is
+being derived wins: the store that opens late is closed at once. A wrong passphrase and a wrong paper code get the same
+answer; a paper code typo (check characters) is caught before any key work and not counted. After a paper code unlock
+the lock screen says "Paper code used. Make a new one soon." (a note in `~/.stickhub/vault/paper-used.json`); the new
+paper code of 7.5 comes in job 6, so the header is not changed here. No apps start while locked (423, a clear message).
+Known deviation: the vault folder is `~/.stickhub/vault-dev` ("dev" is only a name): job 6 decides the final place
+(6.1: the clone's `data/`) and moves it, because the plain app data still lives in `data/` until the migration. Data on
+the stick together with a vault is refused with a clear message until job 5.
+
 ### 7.3 Auto-lock
 - Lock when no hub page has been visible for **5 minutes** (the page sends a heartbeat every 30 s while visible; a
   hidden, closed or frozen page stops sending). The hub page cannot see touches inside an app's iframe (another
@@ -380,6 +393,18 @@ The header copy on the phone lets the unlock start before the stick is even seen
 - A crash or ColorOS killing Termux locks too: the keys only ever lived in that process.
 - While locked, the hub API shows no data names (no conflict lists, no sync details with paths).
 - App browser state that holds names is cleared on lock (decision 11, section 8.5).
+
+**Built (job 4):** auto-lock (`autoLockSeconds` in `~/.stickhub/settings.json`, 10 to 86400, default 300; the timer
+starts at the unlock), the Lock button, `node hub/cli.mjs vault lock` and hub stop all run one lock, in this order:
+(1) new data calls answer 423, (2) the commit in progress lands (`Store.flush`), (3) the apps' browser state is cleared
+(job 3: the open hub pages load each app's `/__hub/clear`, 400 ms, only if a page is open) and the apps stop (SIGTERM,
+1.2 s grace), (4) every data API token is revoked, open sessions end, change events and app logs are forgotten, (5) the
+store closes and zeroes its keys, (6) "locked": the page shows the lock screen and drops the player and its iframe.
+Deviation: clearing browser state comes **before** SIGTERM, not after: `Clear-Site-Data` has to come from the app's own
+server, so the apps must still answer `/__hub/clear`. While locked: the stick status hides conflict lists, sync errors
+and the file being copied (counts only), app logs answer 423 and no log events are sent; tiles keep app names (code
+is plain); the service worker never touches `/api/`. Hard lock and the device slot are v2. Stick pulled in data-on-stick
+mode: job 5 (data on the stick and a vault are refused together until then).
 
 ### 7.4 Add a device
 1. On the new phone: install Termux and Termux:API (both from F-Droid), open the stick in Files, open `START-HERE.txt`.
@@ -439,6 +464,17 @@ message ("This phone's key is gone"). Unlock with the passphrase; the old slot i
   twice as long (2 s, 4 s ... up to 5 min). The count lives in `~/.stickhub/vault/attempts.json`, so a hub restart does
   not reset it; a good unlock resets it. This only slows guessing at the phone; an offline attack on a copied stick
   meets Argon2id instead.
+
+**Built (job 4):** the lock screen field is made by script: `type="password"`, autocomplete, autocapitalize and
+autocorrect off, spellcheck false, a random name and id per page load, no `<form>`, no username field; the value is read
+by script, the field is cleared at once, the secret goes out with `fetch` and the reference is dropped (strings cannot be
+zeroed in JavaScript; the hub zeroes the request body buffer and keeps the secret only for the key derivation). Errors
+in plain words; while the rate limit waits, a countdown and the button disabled. The rate limit
+(`hub/lock/limiter.mjs`): 5 free failures, then 2 s, 4 s ... 5 min, shared by all callers, in
+`~/.stickhub/vault/attempts.json` (folder 0700, file 0600, .tmp + fsync + rename): a restart does not reset it, a
+good unlock does; a broken file counts as "past the free tries"; a clock that went back never makes a wait longer than
+its step. The answer while waiting is 429 with the seconds left. Passphrases typed on the lock screen go through the
+canonical form (4.2). Probe 13 has the by-hand checks (no "Save password?", no word suggestions, nothing learned).
 
 ## 8. Apps, Notebook, sync and atomic writes
 
@@ -893,6 +929,14 @@ Deviations, with the reason:
    alone: the stick-pulled stop comes from the hub, and the page cannot act before it.
 4. Notebook names: 120 characters at most (was 200), to match the vault's path rules (6.6).
 
+### v1 step 4: lock and unlock: built (job 4)
+As in 7.2, 7.3 and 7.9 above. CLI: `vault setup [--own]` (5 generated words typed back, or your own 20+ characters
+typed twice; the paper code shown once and two of its groups typed back; nothing written before every check passed;
+an existing vault is never touched; plain app data is untouched), `vault status`, `vault lock`; `open --vault`,
+`vault dev-create` and the stdin passphrase are gone. Doctor: Argon2id available, the vault's state and wait, and a
+warning while a plain backup tar exists. Probe 13: unlock and lock times, auto-lock, rate limit, tokens after the lock,
+the field checks by hand. Deviations: the vault folder name (7.2); clearing browser state before SIGTERM (7.3).
+
 ### v1 step 2c: faster maintenance: built
 As described in 8.6: size tiers (`compact.tierOf`), compaction reads each chosen pack once (`PackReader.withPack`,
 each segment decrypted at most once), and the index cache for cleanup runs. On a container disk probe 10 went from
@@ -907,7 +951,8 @@ steady max 933 ms, a save behind maintain() 538 ms, worst-case total 16.0 s (bou
 ## 12. Still open
 All twelve review questions are decided (section 0). Left for later measurement, not for design:
 1. Done (probe 12, run 14): Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`; vault costs through hubfs
-   on the phone and the stick are in docs/PROBES.md. Still to do in probe 10 (v1): the field checks of 7.9.
+   on the phone and the stick are in docs/PROBES.md. The field checks of 7.9 moved to probe 13 (job 4; by hand, not
+   run on the phone yet).
 2. Probe 10 (v2): plug-in to open on both paths; whether the page ever needs reopening after the fingerprint box.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
 4. Decided (job 2, Part A): trim both ends, collapse whitespace runs to one space, no case folding (4.2).

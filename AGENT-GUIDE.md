@@ -269,7 +269,17 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   (`open --vault`, the stdin secret, HUB_DEV_VAULT; `vault dev-create` stays until `vault setup`): **done**.
   4 `vault setup [--own]` (hub/cli-setup.mjs: generated words typed back or own 20+ typed twice, paper code shown
   once and two groups typed back, refuses an existing vault; replaces dev-create and hub/devvault.mjs),
-  `vault status`, `vault lock`, doctor checks Argon2id, Vault, Plain backup: **done**. Still to do: 5 probe 13, docs.
+  `vault status`, `vault lock`, doctor checks Argon2id, Vault, Plain backup: **done**. 5 probe 13
+  (probes/p13-lock.mjs: unlock and lock times, auto-lock with autoLockSeconds=10, rate limit, tokens after the lock,
+  the 7.9 field checks by hand) and docs (design 7.2/7.3/7.9 built notes and deviations, 11, 12; hub/vault/README;
+  README; this guide): **done**. **Job 4 done** (not yet run on the phone). Deviations: the vault folder stays
+  ~/.stickhub/vault-dev (job 6 moves it); browser state is cleared before SIGTERM (Clear-Site-Data needs the app's
+  server). Next: Fabian runs probe 13 (`sh probes/run-all.sh --only 13`, answers the by-hand questions); then job 5
+  (sync between replicas, data on the stick with the vault).
+- Lock rules: the keys live only in the hub process (a crash is locked); the store opens only through
+  VaultService.unlock(); while locked no API answer or event may hold a data name (test/lock-action.test.mjs checks);
+  nothing logs, stores or returns a passphrase or paper code (test/lock-api.test.mjs scans logs, events, answers and
+  files for a marker); keep real-Argon2id unlocks in tests few (one in lock-api.test.mjs).
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
@@ -285,8 +295,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   one size tier (at least 4), reads only the moving pieces, and checks a file's content id when all of it moves. close() drops automatic steps that have not started. Compaction
   never runs while there are problems. At 200 files in _index commits are refused (NEEDS_REPAIR) after one capped
   cleanup run. File times are never used.
-- `node hub/cli.mjs vault verify|export` (hub/cli-vault.mjs): passphrase only from the terminal (no echo), never argv,
-  env or a file; export never writes plain files on a stick, in the vault folder or in this clone.
+- `node hub/cli.mjs vault setup|status|lock|verify|export` (hub/cli-vault.mjs, hub/cli-setup.mjs): secrets only from
+  the terminal (no echo), never argv, env or a file; export never writes plain files on a stick, in the vault folder or
+  in this clone. The hub itself takes the passphrase only on its lock screen.
 - Vault rules: node:crypto and standard primitives only, no invented crypto. Never log or print key material,
   passphrases or paper codes; a VaultError message never contains an input value (test/vault-nosecrets.test.mjs).
   zero() keys when done. KDF settings and everything else read from a stick are checked before any KDF runs.

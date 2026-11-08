@@ -55,20 +55,36 @@ node hub/cli.mjs watch start|stop|status           # the watcher
 
 ## Encrypted vault (being built)
 ```sh
+node hub/cli.mjs vault setup [--own]   # a new vault in ~/.stickhub/vault-dev (5 generated words, or your own 20+)
+node hub/cli.mjs vault status         # locked or open, wrong tries, auto-lock (no names)
+node hub/cli.mjs vault lock           # lock now (the running hub)
 node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]   # check everything, write nothing
 node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # decrypt all notes to plain files
-node hub/cli.mjs vault setup [--own]   # a new vault in ~/.stickhub/vault-dev (5 generated words, or your own 20+)
-node hub/cli.mjs vault status         # locked or open, wrong tries, auto-lock
-node hub/cli.mjs vault lock           # lock now (the running hub)
 ```
-With a vault in `~/.stickhub/vault-dev` the hub always starts **locked**: `node hub/cli.mjs open` opens the hub page,
-which shows the lock screen; type the passphrase there (or the paper code). Apps start only while it is open. The
-**Lock** button, `node hub/cli.mjs hub stop`, and 5 minutes without a visible hub page lock it again: the apps stop,
-their browser state is cleared, and the keys are gone. No vault.json there: the hub works with plain data as before.
-`verify` and `export` below ask on the terminal:
-Both ask for the passphrase (or with `--paper` the paper code) on the terminal, with no echo; never as an argument.
-`export` refuses a folder on the stick, inside the vault, inside this clone, or one that is not empty. The exported
-files are **not encrypted**: delete them when you no longer need them. See `docs/VAULT-DESIGN.md`.
+With a vault in `~/.stickhub/vault-dev` the hub always starts **locked**. Its page shows the lock screen: type the
+passphrase there (or the paper code). Only that screen asks for it, never the terminal and never an app. Apps start
+only while the vault is open. The **Lock** button, `vault lock`, `hub stop`, and 5 minutes without a visible hub page
+(`autoLockSeconds` in `~/.stickhub/settings.json`) lock it again: the apps stop, their browser state is cleared, the
+keys are gone. After 5 wrong tries each next try waits longer (2 s, 4 s ... 5 min), also across hub restarts. No
+`vault.json` there: the hub works with plain data as before. Plain app data is not moved into the vault yet (job 6).
+`vault setup` shows the paper code once: write it down and keep it at home.
+
+### Try it
+```sh
+cd ~/StickHub && git pull
+node hub/cli.mjs vault setup   # write down the 5 words and the paper code; type the words and two groups back
+node hub/cli.mjs open          # the hub page shows the lock screen: type the words, tap Unlock
+node hub/cli.mjs vault lock    # locked again: the apps stopped, the page shows the lock screen
+node hub/cli.mjs vault status
+```
+A vault made with `vault dev-create` (job 3) is used as it is: `vault setup` refuses while one exists. A hub that
+was already running opens a new vault only after `node hub/cli.mjs hub stop` and `open`.
+
+`verify` and `export` ask for the passphrase (or with `--paper` the paper code) on the terminal, with no echo; never
+as an argument. `export` refuses a folder on the stick, inside the vault, inside this clone, or one that is not empty.
+The exported files are **not encrypted**: delete them when you no longer need them. See `docs/VAULT-DESIGN.md`.
+
+## Stick and sync details
 - The hub finds the stick by itself (`/proc/self/mountinfo`, every 2 s) and syncs on plug-in and after an app stops.
 - Code: git is the master. Only `hub/` and `apps/` go to the stick, and only when the clone has no uncommitted
   changes and the stick has an older commit. A different or newer commit on the stick is never overwritten.
@@ -139,6 +155,10 @@ Every call needs the header `X-Hub-Token`, except `GET /api/ping`, `POST /api/au
 | Method | Path | |
 |---|---|---|
 | GET | /api/ping | is the hub running, mode, vault on (open) |
+| GET | /api/vault | vault state: none, locked, unlocking, unlocked, locking; wait before the next try; auto-lock |
+| POST | /api/vault/unlock | body `{"method": "passphrase"\|"paper", "secret"}`: 403 wrong, 429 busy or wait, 400 typo |
+| POST | /api/vault/lock | lock now (waits until done) |
+| POST | /api/vault/heartbeat | the page is visible (every 30 s); 5 min without one = lock |
 | POST | /api/auth/exchange | body `{"code"}`: one-time code -> token (open) |
 | POST | /api/auth/code | a fresh one-time login link |
 | POST | /api/hub/stop | stop the hub and its apps |

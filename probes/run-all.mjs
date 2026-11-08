@@ -1,5 +1,5 @@
 // Runs the phone probes, saves the result in probes/out/ (git-ignored) and copies it to the clipboard.
-// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8,9,10,11,12] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
+// Usage: node probes/run-all.mjs [--only 0,3,4,5,6,7,8,9,10,11,12,13] [--dir <folder>] [--big-mb 64] [--small 500] [--usb-calls 10] [--no-clip]
 
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -18,6 +18,7 @@ import { run9 } from './p9-keystore.mjs';
 import { run10 } from './p10-store.mjs';
 import { run11 } from './p11-dataapi.mjs';
 import { run12 } from './p12-apps.mjs';
+import { run13 } from './p13-lock.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -77,6 +78,7 @@ async function main() {
   await step(r, 7, opts, () => run7(r));
   await step(r, 8, opts, () => run8(r));
   await step(r, 9, opts, () => run9(r));
+  await step(r, 13, opts, () => run13(r, { ask, open: (url) => run('termux-open-url', [url], { timeout: 10_000 }) }));
 
   const outDir = join(here, 'out');
   mkdirSync(outDir, { recursive: true });

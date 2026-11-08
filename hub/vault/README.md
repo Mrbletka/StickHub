@@ -30,6 +30,17 @@ a key, a passphrase, a paper code or any other input value.
 Use: `parseHeader(text)` -> `unlockWithPassphrase(h, pass)` or `unlockWithPaperCode(h, code)` (the MAC is checked
 inside) -> `subkeys(dk, h.vaultId, h.epoch)` -> `sealVx` / `openVx` / streams. Zero the data key and subkeys on lock.
 
+## In the hub (job 4): `hub/lock/`
+| File | What |
+|---|---|
+| `service.mjs` | the vault's state in the hub (none, locked, unlocking, unlocked, locking), unlock by passphrase or paper code (one at a time; a lock wins), the lock in steps, auto-lock |
+| `limiter.mjs` | the unlock rate limit of design 7.9 (`~/.stickhub/vault/attempts.json`), with an injectable clock |
+| `routes.mjs` | `GET /api/vault`, `POST /api/vault/unlock`, `/lock`, `/heartbeat` |
+
+The store opens only through `VaultService.unlock()` (the lock screen); `store.flush()` finishes the commit in
+progress for the lock, `store.close()` zeroes the keys. `vault setup` (`hub/cli-setup.mjs`) makes a new vault in
+`~/.stickhub/vault-dev`. The page side is `hub/ui/vaultlock.js`.
+
 ## Word list credit
 `wordlist-eff-large.txt` is the **EFF Large Wordlist for Passphrases** by the **Electronic Frontier Foundation**
 (EFF), https://www.eff.org/dice (file: https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt), licensed under
