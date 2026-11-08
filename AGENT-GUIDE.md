@@ -267,7 +267,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   events, no app start): **done**. 3 the lock screen (hub/ui/vaultlock.js: the 7.9 field, Passphrase / Paper code,
   countdown, heartbeat every 30 s while visible, Lock button; the player goes on lock) and the dev unlock removed
   (`open --vault`, the stdin secret, HUB_DEV_VAULT; `vault dev-create` stays until `vault setup`): **done**.
-  Still to do: 4 `vault setup|status|lock`, doctor; 5 probe 13 and docs.
+  4 `vault setup [--own]` (hub/cli-setup.mjs: generated words typed back or own 20+ typed twice, paper code shown
+  once and two groups typed back, refuses an existing vault; replaces dev-create and hub/devvault.mjs),
+  `vault status`, `vault lock`, doctor checks Argon2id, Vault, Plain backup: **done**. Still to do: 5 probe 13, docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

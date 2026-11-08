@@ -2,7 +2,8 @@
 // Base for a setup guide for a new phone. Read-only: it changes nothing (except a tiny test file on the stick,
 // removed at once, to see that the stick is writable).
 
-import { access, readFile, stat, writeFile, rm, constants } from 'node:fs/promises';import { join } from 'node:path';
+import { access, readFile, readdir, stat, writeFile, rm, constants } from 'node:fs/promises';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { run } from './platform/run.mjs';
 import { listVolumes } from './platform/termux.mjs';
@@ -13,6 +14,9 @@ import { isPortFree } from './ports.mjs';
 import { readToken } from './auth.mjs';
 import { loadSettings } from './config.mjs';
 import { runningWatcher } from './cli-watch.mjs';
+import { hasArgon2 } from './vault/kdf.mjs';
+import { vaultDir } from './cli-setup.mjs';
+import { Limiter } from './lock/limiter.mjs';
 
 const TERMUX_TOOLS = ['termux-open-url', 'termux-notification', 'termux-wake-lock', 'termux-clipboard-set', 'termux-toast'];
 
@@ -31,6 +35,7 @@ const TERMUX_TOOLS = ['termux-open-url', 'termux-notification', 'termux-wake-loc
  * @property {(path: string, o?: object) => Promise<{status: number, body: any}|null>} callHub
  * @property {(port: number) => Promise<boolean>} isPortFree
  * @property {(home: string) => Promise<object|null>} runningWatcher
+ * @property {boolean} hasArgon2  this Node has crypto.argon2
  */
 
 /** The real device. */
@@ -39,7 +44,7 @@ export function realCtx(root, home) {
   return {
     root, home, env, userHome: homedir(), nodeVersion: process.versions.node,
     hasCmd: (cmd) => (env.PATH || '').split(':').some((d) => d && existsSync(join(d, cmd))),
-    run, listVolumes, findStick: (v) => findStick(v, createFsx()), callHub, isPortFree, runningWatcher,
+    run, listVolumes, findStick: (v) => findStick(v, createFsx()), callHub, isPortFree, runningWatcher, hasArgon2,
   };
 }
 
@@ -130,6 +135,27 @@ export const CHECKS = [
     const on = Object.entries(settings).filter(([, v]) => v).map(([k]) => k);
     return token ? ok('Token and settings', `token present; settings on: ${on.length ? on.join(', ') : 'none'}`)
       : info('Token and settings', 'no token yet (the hub makes one on its first start)', 'node hub/cli.mjs open');
+  },
+  async function argon2(c) {
+    return c.hasArgon2 ? ok('Argon2id', 'available (the vault passphrase key)')
+      : fail('Argon2id', `Node v${c.nodeVersion} has no Argon2id; the vault needs it`, c.env.TERMUX_VERSION ? 'pkg upgrade nodejs' : 'Install Node 24.7 or newer');
+  },
+  async function vault(c) {
+    const dir = vaultDir(c.home);
+    if (!(await isFile(join(dir, 'vault.json')))) return info('Vault', 'none: the apps use plain data', 'node hub/cli.mjs vault setup   (when you want the vault)');
+    const limiter = new Limiter({ file: join(c.home, 'vault', 'attempts.json') });
+    await limiter.load();
+    const p = await c.callHub('/api/vault', { token: await readToken(c.home).catch(() => null), timeout: 1500 });
+    const state = p?.status === 200 ? { unlocked: 'open', locked: 'locked', unlocking: 'opening', locking: 'locking' }[p.body.state] || p.body.state : 'locked (the hub is not running)';
+    const tries = limiter.failures ? `; ${limiter.failures} wrong tries since the last good one` : '';
+    return limiter.waitMs() ? warn('Vault', `${dir}: ${state}${tries}`, `Wait ${Math.ceil(limiter.waitMs() / 1000)} s before the next try`)
+      : ok('Vault', `${dir}: ${state}${tries}`);
+  },
+  async function plainBackup(c) {
+    // The plain backup tar of the migration (design 7.1, job 6): a plain copy of the data while it exists.
+    const tars = (await readdir(c.userHome).catch(() => [])).filter((n) => /^stickhub-plain-backup-.*\.tar$/.test(n));
+    return tars.length ? warn('Plain backup', `plain copy of your data: ${tars.map((n) => join(c.userHome, n)).join(', ')}`, 'Delete it when the vault works: rm ~/stickhub-plain-backup-*.tar')
+      : ok('Plain backup', 'no plain backup tar in your home folder');
   },
 ];
 

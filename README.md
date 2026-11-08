@@ -57,7 +57,9 @@ node hub/cli.mjs watch start|stop|status           # the watcher
 ```sh
 node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]   # check everything, write nothing
 node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # decrypt all notes to plain files
-node hub/cli.mjs vault dev-create   # DEV ONLY until `vault setup`: a test vault in ~/.stickhub/vault-dev
+node hub/cli.mjs vault setup [--own]   # a new vault in ~/.stickhub/vault-dev (5 generated words, or your own 20+)
+node hub/cli.mjs vault status         # locked or open, wrong tries, auto-lock
+node hub/cli.mjs vault lock           # lock now (the running hub)
 ```
 With a vault in `~/.stickhub/vault-dev` the hub always starts **locked**: `node hub/cli.mjs open` opens the hub page,
 which shows the lock screen; type the passphrase there (or the paper code). Apps start only while it is open. The
@@ -120,7 +122,7 @@ hub/vault/            encrypted vault: crypto and the store (see docs/VAULT-DESI
 hub/dataapi/          the data API: apps reach the vault over ~/.stickhub/run/data.sock (see its README)
 hub/appkit/hubfs.mjs  the data client apps copy as lib/hubfs.mjs (node:fs-like; the vault or plain files)
 hub/lock/             the vault in the hub: lock state, unlock, lock, auto-lock, rate limit, /api/vault routes
-hub/devvault.mjs      DEV ONLY: vault dev-create (until vault setup)
+hub/cli-setup.mjs     vault setup (passphrase, paper code shown once, typed back)
 hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
 hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
 hub/ui/clear.js       clears an app's browser storage (its /__hub/clear in a hidden frame) before the hub stops it

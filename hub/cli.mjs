@@ -12,7 +12,7 @@
 //   node hub/cli.mjs widget install      home-screen shortcuts for Termux:Widget
 //   node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]   a new app from a starter
 //   node hub/cli.mjs doctor [--json]     what this device has and lacks for StickHub, and how to fix it
-//   node hub/cli.mjs vault verify|export ...   check an encrypted vault folder, or export it to plain files
+//   node hub/cli.mjs vault setup|status|lock|verify|export ...   the encrypted vault
 
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -246,7 +246,8 @@ async function newApp(id, flags) {
 
 async function main(argv) {
   if (argv[0] === 'vault') { // own options (--paper, --quick): handled before the general parser
-    return vaultCommand(argv.slice(1), { root: ROOT, home: stickhubHome(), mounts: async () => (await listVolumes()).volumes.map((v) => v.mountPoint) });
+    return vaultCommand(argv.slice(1), { root: ROOT, home: stickhubHome(), mounts: async () => (await listVolumes()).volumes.map((v) => v.mountPoint),
+      callHub, token: () => readToken(stickhubHome()) });
   }
   const { words, flags } = parse(argv);
   const [a, b, c] = words;

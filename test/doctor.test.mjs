@@ -32,14 +32,20 @@ async function phone() {
     callHub: async () => ({ status: 200, body: { name: 'StickHub', mode: 'phone' } }),
     isPortFree: async () => false,
     runningWatcher: async () => ({ pid: 123 }),
+    hasArgon2: true,
   };
 }
 const byName = (results) => Object.fromEntries(results.map((r) => [r.name, r]));
 
 test('a fully set up phone: all ok', async () => {
   const c = await phone();
+  await mkdir(join(c.home, 'vault-dev'), { recursive: true }); // a set-up phone has a vault (job 4)
+  await writeFile(join(c.home, 'vault-dev', 'vault.json'), '{}');
+  const hub = c.callHub;
+  c.callHub = async (path, o) => (path === '/api/vault' ? { status: 200, body: { state: 'locked' } } : hub(path, o));
   const r = await runDoctor(c);
   assert.deepEqual(r.filter((x) => x.state !== 'ok').map((x) => x.name), []);
+  assert.match(byName(r).Vault.detail, /vault-dev: locked$/);
   assert.match(formatReport(r), /All good\./);
   assert.match(byName(r).Stick.detail, /"Test" at .*writable/);
 });
@@ -85,4 +91,26 @@ test('Termux:API app missing (the commands hang), a blank stick, no hub, a broke
   assert.equal(r.Hub.state, 'info');
   assert.equal(r.watcher.state, 'fail', 'a crashing check is reported, the others still run');
   assert.match(r.watcher.detail, /boom/);
+});
+
+test('vault checks: no Argon2id fails; a vault, its wrong-tries wait and a plain backup tar are reported', async () => {
+  const c = await phone();
+  let r = byName(await runDoctor(c));
+  assert.deepEqual([r.Argon2id.state, r.Vault.state, r['Plain backup'].state], ['ok', 'info', 'ok']);
+  assert.match(r.Vault.fix, /vault setup/);
+  c.hasArgon2 = false;
+  await mkdir(join(c.home, 'vault-dev'), { recursive: true });
+  await writeFile(join(c.home, 'vault-dev', 'vault.json'), '{}');
+  await mkdir(join(c.home, 'vault'), { recursive: true });
+  await writeFile(join(c.home, 'vault', 'attempts.json'), JSON.stringify({ failures: 6, last: Date.now() }));
+  await writeFile(join(c.userHome, 'stickhub-plain-backup-2026-11-08.tar'), 'TEST ONLY');
+  c.callHub = async (path) => (path === '/api/vault' ? { status: 200, body: { state: 'unlocked' } } : null);
+  r = byName(await runDoctor(c));
+  assert.equal(r.Argon2id.state, 'fail');
+  assert.match(r.Argon2id.fix, /pkg upgrade nodejs/);
+  assert.equal(r.Vault.state, 'warn');
+  assert.match(r.Vault.detail, /open; 6 wrong tries/);
+  assert.match(r.Vault.fix, /Wait \d+ s/);
+  assert.equal(r['Plain backup'].state, 'warn');
+  assert.match(r['Plain backup'].detail, /stickhub-plain-backup-2026-11-08\.tar/);
 });
