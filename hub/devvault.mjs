@@ -1,29 +1,21 @@
-// DEV ONLY (job 3b). A temporary way to make a vault and to start the hub with it open, until job 4 brings the lock
-// screen. Nothing here is the real setup (design 7.1) or the real unlock (design 7.2).
-// - devCreate: `node hub/cli.mjs vault dev-create [<folder>]`: a new vault with a generated 5-word passphrase and a
-//   paper code. Both are shown ONCE on the terminal (never written to a file, argv or the environment); the person
-//   types the passphrase back to show it was saved; only then the vault is written. The screen is cleared after.
-// - The hub side: `node hub/cli.mjs open --vault [<folder>]` asks for the passphrase on the terminal and starts the
-//   hub with HUB_DEV_VAULT=<folder> (a HUB_ name, so apps never see it) and the passphrase on its stdin (a pipe).
-//   readPassphrase() reads it there; openDevVault() opens the store, which then lives only in the hub's memory.
+// DEV ONLY (job 3b): `node hub/cli.mjs vault dev-create [<folder>]` makes a test vault with a generated 5-word
+// passphrase and a paper code. Both are shown ONCE on the terminal (never written to a file, argv or the environment);
+// the person types the passphrase back to show it was saved; only then the vault is written; the screen is cleared.
+// The hub opens a vault only on its lock screen (job 4). `vault setup` (job 4, next commit) replaces this file.
 
 import { mkdir, readdir, stat } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { StringDecoder } from 'node:string_decoder';
+import { join } from 'node:path';
 import { generatePassphrase } from './vault/words.mjs';
 import { newDataKey, newId, zero } from './vault/keys.mjs';
 import { makePassphraseSlot, makeRecoverySlot } from './vault/slots.mjs';
-import { buildHeader, unlockWithPassphrase } from './vault/header.mjs';
+import { buildHeader } from './vault/header.mjs';
 import { canonicalPassphrase } from './vault/kdf.mjs';
-import { Store, openVaultFolder } from './vault/store.mjs';
+import { Store } from './vault/store.mjs';
 import { realish, inside } from './vault/export.mjs';
 import { readSecret } from './cli-prompt.mjs';
 
 /** Where the dev vault goes when no folder is named (outside the clone, never on the stick). */
 export const devVaultDir = (home) => join(home, 'vault-dev');
-
-/** Exit code of the hub when the passphrase does not open the vault (the CLI asks again). */
-export const EXIT_WRONG_PASSPHRASE = 3;
 
 // Clear the screen and the scrollback, so the words do not stay on the terminal.
 const CLEAR = '\u001b[2J\u001b[3J\u001b[H';
@@ -84,45 +76,9 @@ export async function devCreate(folder, d) {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const store = await Store.create(dir, { headerText, dk, autoCleanupEvery: 0 });
     await store.close();
-    out(`Vault created in ${dir} (DEV ONLY). The screen was cleared.\nStart the hub with it: node hub/cli.mjs open --vault ${dir}`);
+    out(`Vault created in ${dir} (DEV ONLY). The screen was cleared.\nStart the hub: node hub/cli.mjs open (it opens locked; type the passphrase on its page)`);
     return 0;
   } finally {
     zero(dk);
   }
-}
-
-/**
- * The passphrase for the hub: typed with no echo on a terminal, or the first line of a pipe (`open --vault`).
- * Never from argv, the environment or a file.
- * @param {NodeJS.ReadStream} stdin
- * @returns {Promise<string>}
- */
-export function readPassphrase(stdin) {
-  if (stdin.isTTY) return readSecret('Vault passphrase (DEV ONLY): ', { input: stdin });
-  return new Promise((ok, fail) => {
-    const dec = new StringDecoder('utf8');
-    let text = '';
-    const done = () => {
-      stdin.off('data', onData);
-      stdin.off('end', done);
-      stdin.destroy(); // nothing else comes this way
-      const nl = text.indexOf('\n');
-      ok((nl >= 0 ? text.slice(0, nl) : text).replace(/\r$/, ''));
-      text = '';
-    };
-    const onData = (b) => { text += dec.write(b); if (text.includes('\n') || text.length > 4096) done(); };
-    stdin.on('data', onData);
-    stdin.once('end', done);
-    stdin.once('error', fail);
-  });
-}
-
-/**
- * Open the dev vault in this process (Argon2id: about 1 s and 310 MB on the phone). The store keeps the data key in
- * memory only. Wrong passphrase: VaultError WRONG_SECRET.
- * @param {string} dir
- * @param {string} passphrase
- */
-export function openDevVault(dir, passphrase) {
-  return openVaultFolder(resolve(dir), (h) => unlockWithPassphrase(h, passphrase));
 }

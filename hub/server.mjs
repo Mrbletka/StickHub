@@ -19,7 +19,6 @@ import { findStick } from './stick.mjs';
 import { LiveData } from './livedata.mjs';
 import { PidFile, cleanupLeftovers } from './proc.mjs';
 import { createDataApi } from './dataapi/server.mjs';
-import { readPassphrase, EXIT_WRONG_PASSPHRASE } from './devvault.mjs';
 import { VaultService } from './lock/service.mjs';
 
 export const HUB_PORT = 8787;
@@ -170,24 +169,10 @@ async function main() {
       process.exit(1);
     }
   }
-  // DEV ONLY until the lock screen (job 4, commit 3 removes it): `node hub/cli.mjs open --vault` sets HUB_DEV_VAULT (a
-  // folder) and sends the passphrase on stdin; the hub then unlocks through the vault service.
-  const vaultDir = process.env.HUB_DEV_VAULT;
-  delete process.env.HUB_DEV_VAULT;
-  const devPass = vaultDir ? await readPassphrase(process.stdin) : null;
+  // With a vault (~/.stickhub/vault-dev/vault.json) the hub starts locked: only its page's lock screen opens it.
   let shutdown = () => {};
   const hub = await createHub({ port: Number(process.env.HUB_PORT) || HUB_PORT, shutdown: () => shutdown(0), dataOnStick,
-    ...(vaultDir ? { vault: { dir: vaultDir } } : {}), autoLockSeconds: settings.autoLockSeconds });
-  if (devPass !== null) {
-    if (!hub.vault) { console.error('Vault (dev): there is no vault in that folder.'); process.exit(1); }
-    try {
-      await hub.vault.unlock('passphrase', devPass);
-    } catch (e) {
-      console.error(`Vault (dev): ${e.code === 'WRONG' ? 'wrong passphrase.' : e.message}`);
-      await hub.dataApi?.close();
-      process.exit(e.code === 'WRONG' ? EXIT_WRONG_PASSPHRASE : 1);
-    }
-  }
+    autoLockSeconds: settings.autoLockSeconds });
   for (const e of hub.procman.list()) if (e.problems.length) console.warn(`app ${e.id}: ${e.problems.join('; ')}`);
   let url;
   try {

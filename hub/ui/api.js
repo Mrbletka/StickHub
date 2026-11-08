@@ -42,16 +42,17 @@ export async function loginFromUrl() {
 }
 
 /**
- * Call the API with the token.
+ * Call the API with the token; body (an object) goes as JSON.
  * @returns {Promise<{ok: boolean, status: number, body: any}>}
  */
-export async function api(path, { method = 'GET' } = {}) {
+export async function api(path, { method = 'GET', body } = {}) {
   const token = getToken();
   if (!token) throw new LoginNeeded();
-  const res = await fetch(path, { method, headers: { 'x-hub-token': token }, cache: 'no-store' });
+  const res = await fetch(path, { method, cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { 'x-hub-token': token, ...(body === undefined ? {} : { 'content-type': 'application/json' }) } });
   if (res.status === 401) { clearToken(); throw new LoginNeeded(); }
-  const body = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, body };
+  const answer = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, body: answer };
 }
 
 /**

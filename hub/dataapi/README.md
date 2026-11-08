@@ -1,10 +1,11 @@
 # hub/dataapi: the data API (job 3a)
 
 Apps read and write their data through the hub, never as plain files (design `docs/VAULT-DESIGN.md` 8.1). Wired
-into the hub in job 3b, **DEV ONLY** for now: `node hub/cli.mjs open --vault` opens a vault in the hub process and
-serves it on `~/.stickhub/run/data.sock`; procman gives every app with `"data": "hubfs"` the socket and a fresh token
+into the hub in job 3b. With a vault, the hub starts locked (every route answers 423 until its lock screen opens it,
+job 4) and serves it on `~/.stickhub/run/data.sock`; procman gives every app with `"data": "hubfs"` the socket and a fresh token
 per start (`issue` before the start, `revoke` on stop, crash or failed start). Closing the hub stops the apps, then
-closes this server, then the store. No lock screen yet (job 4): the server asks `getStore()`.
+closes this server; the lock closes the store. The server asks `getStore()` (null while locked: 423); the lock
+calls `revokeAll()` (every token, open sessions, change events).
 
 | File | What |
 |---|---|

@@ -5,6 +5,7 @@ import { chipFor, fillStickSheet, esc } from './stick.js';
 import { api, openStream, loginFromUrl, getToken, LoginNeeded } from './api.js';
 import { createPlayer } from './player.js';
 import { clearAppStorage } from './clear.js';
+import { createVaultLock } from './vaultlock.js';
 
 const $ = (sel) => document.querySelector(sel);
 const grid = $('#grid');
@@ -20,6 +21,11 @@ let hubStatus = null;
 let events = null;
 let logsFor = null;
 const player = createPlayer({ root: $('#player'), onClose: () => render() });
+// The vault: locked = the lock screen covers everything, the player and its iframe go, no sheet stays open.
+const vaultLock = createVaultLock({
+  root: $('#vault'), lockButton: $('#lockbtn'), toast: (t) => toast(t), onLogin: () => showLocked(), onUnlocked: () => render(),
+  onLocked: () => { player.close(); for (const d of [menu, logs, stickSheet]) if (d.open) d.close(); },
+});
 const LONG_PRESS_MS = 450;
 
 
@@ -174,6 +180,7 @@ function onEvent(name, data) {
   } else if (name === 'status') {
     const prev = hubStatus?.stick?.state;
     hubStatus = data;
+    vaultLock.show(data.vault);
     showLive(data.live);
     if (prev && prev !== 'connected' && hubStatus.stick?.state === 'connected') flashChip();
     render();

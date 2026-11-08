@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, copyFile, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, copyFile, mkdir, rm, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,9 +14,8 @@ import { createHub } from '../hub/server.mjs';
 import { VAULT_FILES_ERROR } from '../hub/procman.mjs';
 import { createHubFs } from '../hub/appkit/hubfs.mjs';
 import { findFreePort } from '../hub/ports.mjs';
-import { Store } from '../hub/vault/store.mjs';
 import { makeApps, http, GOOD_SERVER } from './helpers.mjs';
-import { makeTestVault, makeVaultFolder } from './vault-helpers.mjs';
+import { makeVaultFolder } from './vault-helpers.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 const cleanups = [];
@@ -134,42 +133,31 @@ test('close: apps stop, then the data API goes, then the store closes after its 
   assert.equal(hub.procman.view('keeper').status, 'stopped');
 });
 
-/** Run node hub/server.mjs with a dev vault; the passphrase goes on stdin (a pipe), as `open --vault` does. */
-async function runHub(dir, passphrase, home) {
+test('node hub/server.mjs with a vault in ~/.stickhub/vault-dev: starts locked, the API unlocks it, SIGTERM locks and ends', async () => {
+  const vf = await makeVaultFolder();
+  cleanups.push(() => rm(vf.root, { recursive: true, force: true }));
+  await rename(vf.dir, join(vf.home, 'vault-dev')); // the hub's own vault folder
   const port = await findFreePort({ from: 27270, to: 27279 });
-  const child = spawn(process.execPath, [join(ROOT, 'hub', 'server.mjs')], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, HUB_PORT: String(port), STICKHUB_HOME: home, HUB_DEV_VAULT: dir } });
+  const child = spawn(process.execPath, [join(ROOT, 'hub', 'server.mjs')], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HUB_PORT: String(port), STICKHUB_HOME: vf.home } });
   let output = '';
-  child.stdout.on('data', (b) => { output += b; });
-  child.stderr.on('data', (b) => { output += b; });
-  child.stdin.end(`${passphrase}\n`);
+  for (const s of [child.stdout, child.stderr]) s.on('data', (b) => { output += b; });
   const exit = new Promise((r) => child.once('exit', (code) => r(code)));
-  return { child, port, exit, output: () => output };
-}
-
-test('node hub/server.mjs with HUB_DEV_VAULT: passphrase from stdin; wrong = exit 3; SIGTERM closes socket and store', async () => {
-  const v = await makeTestVault();
-  const root = await mkdtemp(join(tmpdir(), 'stickhub-devvault-'));
-  const home = join(root, 'home');
-  const dir = join(root, 'vault');
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
-  await (await Store.create(dir, { headerText: v.text, dk: v.dk })).close();
-
-  const wrong = await runHub(dir, 'TEST ONLY not the passphrase', home);
-  assert.equal(await wrong.exit, 3);
-  assert.match(wrong.output(), /wrong passphrase/);
-
-  const ok = await runHub(dir, v.passphrase, home);
   try {
-    await until(async () => (await http(ok.port, '/api/ping').catch(() => null))?.status === 200, 15000);
-    assert.equal(JSON.parse((await http(ok.port, '/api/ping')).body).vault, true);
-    assert.ok(existsSync(join(home, 'run', 'data.sock')));
-    assert.ok(!ok.output().includes(v.passphrase), 'the passphrase is never printed');
+    await until(async () => (await http(port, '/api/ping').catch(() => null))?.status === 200, 15000);
+    const token = JSON.parse(await readFile(join(vf.home, 'token.json'), 'utf8')).token;
+    const call = (path, o = {}) => http(port, path, { ...o, headers: { 'x-hub-token': token, ...o.headers } });
+    assert.equal(JSON.parse((await call('/api/vault')).body).state, 'locked', 'always starts locked');
+    assert.match(output, /vault locked/);
+    const u = await call('/api/vault/unlock', { method: 'POST', body: JSON.stringify({ method: 'passphrase', secret: vf.passphrase }) });
+    assert.equal(JSON.parse(u.body).state, 'unlocked');
+    assert.ok(existsSync(join(vf.home, 'run', 'data.sock')));
+    assert.ok(!output.includes(vf.passphrase), 'the passphrase is never printed');
   } finally {
-    ok.child.kill('SIGTERM');
+    child.kill('SIGTERM');
   }
-  assert.equal(await ok.exit, 0);
-  assert.equal(existsSync(join(home, 'run', 'data.sock')), false);
+  assert.equal(await exit, 0);
+  assert.equal(existsSync(join(vf.home, 'run', 'data.sock')), false);
 });
 
 test('the real sample apps with the vault on: tap-counter counts into the vault, pocket-timer needs nothing', async () => {

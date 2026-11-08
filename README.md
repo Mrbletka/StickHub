@@ -57,25 +57,13 @@ node hub/cli.mjs watch start|stop|status           # the watcher
 ```sh
 node hub/cli.mjs vault verify <vault-folder> [--quick] [--paper] [--json]   # check everything, write nothing
 node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # decrypt all notes to plain files
-node hub/cli.mjs vault dev-create [<folder>]   # DEV ONLY: a test vault (default ~/.stickhub/vault-dev)
-node hub/cli.mjs open --vault [<folder>]       # DEV ONLY: type the passphrase, the hub runs with the vault open
+node hub/cli.mjs vault dev-create   # DEV ONLY until `vault setup`: a test vault in ~/.stickhub/vault-dev
 ```
-### Try it (DEV ONLY)
-```sh
-cd ~/StickHub && git pull
-node hub/cli.mjs vault dev-create   # write down the 5 words and the paper code, then type the words back
-node hub/cli.mjs open --vault       # type the words: the hub opens with the vault (a running hub restarts)
-node hub/cli.mjs hub stop           # stop it; open --vault starts it again
-ls -R ~/.stickhub/vault-dev         # only vault.json, vault.bak.json, _index/*.vx, _packs/*.vx: no note names
-```
-Then open the Notebook in the hub and write notes: they go into the encrypted vault. Tap Counter counts into it too.
-
-**DEV ONLY until the lock screen (job 4).** `dev-create` shows a generated 5-word passphrase and a paper code once on
-the terminal, asks you to type the passphrase back, and only then writes the vault. `open --vault` asks for the
-passphrase (no echo) and starts the hub with the vault open in its memory: apps with `"data": "hubfs"` read and write
-through the data API (`~/.stickhub/run/data.sock`); apps that still want plain files show why on their tile and do
-not start; the plain data sync leaves `data/` alone. Without `--vault` the hub works as before. No sync of the vault
-to the stick yet (job 5), no lock screen, no auto-lock.
+With a vault in `~/.stickhub/vault-dev` the hub always starts **locked**: `node hub/cli.mjs open` opens the hub page,
+which shows the lock screen; type the passphrase there (or the paper code). Apps start only while it is open. The
+**Lock** button, `node hub/cli.mjs hub stop`, and 5 minutes without a visible hub page lock it again: the apps stop,
+their browser state is cleared, and the keys are gone. No vault.json there: the hub works with plain data as before.
+`verify` and `export` below ask on the terminal:
 Both ask for the passphrase (or with `--paper` the paper code) on the terminal, with no echo; never as an argument.
 `export` refuses a folder on the stick, inside the vault, inside this clone, or one that is not empty. The exported
 files are **not encrypted**: delete them when you no longer need them. See `docs/VAULT-DESIGN.md`.
@@ -131,10 +119,12 @@ hub/auth.mjs          token and one-time login codes
 hub/vault/            encrypted vault: crypto and the store (see docs/VAULT-DESIGN.md)
 hub/dataapi/          the data API: apps reach the vault over ~/.stickhub/run/data.sock (see its README)
 hub/appkit/hubfs.mjs  the data client apps copy as lib/hubfs.mjs (node:fs-like; the vault or plain files)
-hub/devvault.mjs      DEV ONLY: vault dev-create, the passphrase for open --vault (until the lock screen)
+hub/lock/             the vault in the hub: lock state, unlock, lock, auto-lock, rate limit, /api/vault routes
+hub/devvault.mjs      DEV ONLY: vault dev-create (until vault setup)
 hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
 hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
 hub/ui/clear.js       clears an app's browser storage (its /__hub/clear in a hidden frame) before the hub stops it
+hub/ui/vaultlock.js   the lock screen (passphrase or paper code), the heartbeat and the Lock button
 hub/ui/               the web UI (vanilla)
 apps/                 the apps (tap-counter, pocket-timer are samples)
 probes/               phone-only measurements, results in docs/PROBES.md

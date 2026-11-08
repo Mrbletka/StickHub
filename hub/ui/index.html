@@ -14,7 +14,10 @@
 <body>
 <header class="bar">
   <h1>StickHub</h1>
-  <button id="chip" class="chip" type="button" aria-live="polite">Connecting…</button>
+  <div class="bar-right">
+    <button id="lockbtn" class="chip" type="button" hidden aria-label="Lock the vault">Lock</button>
+    <button id="chip" class="chip" type="button" aria-live="polite">Connecting…</button>
+  </div>
 </header>
 
 <main id="app-main">
@@ -79,6 +82,23 @@
   </div>
   <button data-act="close" class="ghost">Close</button>
 </dialog>
+
+<!-- The vault's lock screen (design 7.9). No <form>: the field is made by script (vaultlock.js) with a random name
+     and id, read by script and cleared at once, so Chrome has nothing to offer to save. -->
+<section id="vault" class="vault" aria-labelledby="vault-title" hidden>
+  <img src="/icons/icon-192.png" alt="">
+  <h2 id="vault-title">StickHub is locked</h2>
+  <p class="muted">Your app data is in the vault. Open it to use your apps.</p>
+  <div class="vault-modes">
+    <button type="button" data-mode="passphrase" aria-pressed="true">Passphrase</button>
+    <button type="button" data-mode="paper" aria-pressed="false">Paper code</button>
+  </div>
+  <div id="vault-field"></div>
+  <p id="vault-hint" class="muted"></p>
+  <button id="vault-unlock" type="button" class="vault-go">Unlock</button>
+  <p id="vault-msg" class="error-text" role="alert"></p>
+  <p id="vault-paper" class="warn-text" hidden>Paper code used. Make a new one soon.</p>
+</section>
 
 <section id="removed" class="removed" role="alert" hidden>
   <img src="/icons/icon-192.png" alt="">

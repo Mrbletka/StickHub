@@ -8,9 +8,8 @@ import { mkdtempSync, rmSync, readdirSync, readFileSync, writeFileSync, mkdirSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { vaultCommand } from '../hub/cli-vault.mjs';
-import { openDevVault, readPassphrase } from '../hub/devvault.mjs';
 import { openVaultFolder } from '../hub/vault/store.mjs';
-import { unlockWithPaperCode } from '../hub/vault/header.mjs';
+import { unlockWithPaperCode, unlockWithPassphrase } from '../hub/vault/header.mjs';
 import { SMALL_KDF } from './vault-helpers.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -58,7 +57,7 @@ test('dev-create: 5 words and a paper code shown once, typed back, then the vaul
   assert.match(r.err, /That is not it\. Try again\./);
   assert.match(r.out, /\u001b\[2J\u001b\[3J/, 'the screen is cleared after');
   assert.match(r.out, /DEV ONLY/);
-  const store = await openDevVault(dir, r.passphrase);
+  const store = await openVaultFolder(dir, (h) => unlockWithPassphrase(h, r.passphrase));
   assert.equal(store.status().files, 0);
   await store.close();
   const byPaper = await openVaultFolder(dir, (h) => unlockWithPaperCode(h, r.paper));
@@ -92,15 +91,4 @@ test('dev-create: refuses a pipe, a folder in the clone, on a stick or not empty
   assert.equal(r.code, 0, r.err);
   assert.ok(existsSync(join(home, 'vault-dev', 'vault.json')));
   assert.equal((await vaultCommand(['dev-create', 'a', 'b'], { err: () => {}, root: ROOT })), 2);
-});
-
-test('the hub reads the passphrase from the first line of a pipe', async () => {
-  const p = new PassThrough();
-  const got = readPassphrase(p);
-  p.write('TEST ONLY words here\r\nnot this\n');
-  assert.equal(await got, 'TEST ONLY words here');
-  const empty = new PassThrough();
-  const none = readPassphrase(empty);
-  empty.end();
-  assert.equal(await none, '');
 });

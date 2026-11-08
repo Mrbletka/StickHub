@@ -100,8 +100,8 @@ The hub also works with no stick plugged in. A setting `requireStick` makes it r
   "entry": "server.js", "port": "auto", "args": [], "env": {}, "version": "0.1.0" }
 ~~~
 - Relative paths only, no "..". Validate strictly. One broken app must never break the hub: show the error on its tile.
-- The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>). With the vault on (DEV ONLY now:
-  `open --vault`), apps with `"data": "hubfs"` get HUB_DATA_SOCKET + HUB_DATA_TOKEN instead (a new token per start,
+- The app gets env: PORT, HUB_APP_ID, HUB_APP_DIR, HUB_DATA_DIR (= data/<id>). With the vault open (the hub starts locked
+  when ~/.stickhub/vault-dev/vault.json exists; its lock screen opens it), apps with `"data": "hubfs"` get HUB_DATA_SOCKET + HUB_DATA_TOKEN instead (a new token per start,
   revoked on stop and crash) and never HUB_DATA_DIR; apps with `"data": "files"` (the default for node-server) show
   why on their tile and do not start; `"none"` (the default for static) gets nothing.
 - Saves: an app saves to HUB_DATA_DIR through its own server. Browser storage (IndexedDB, localStorage) is NOT synced.
@@ -264,8 +264,10 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   timer; the hub starts locked when <home>/vault-dev/vault.json exists): **done**. 2 the lock action (refuse 423, finish
   the commit, clear browser state then stop the apps with 1.2 s grace, revoke tokens and sessions and forget change
   events and app logs, close the store) and the locked-API audit (stick status without names, no app logs, no log
-  events, no app start): **done**. Still to do: 3 the lock screen page, then remove the dev unlock;
-  4 `vault setup|status|lock`, doctor; 5 probe 13 and docs.
+  events, no app start): **done**. 3 the lock screen (hub/ui/vaultlock.js: the 7.9 field, Passphrase / Paper code,
+  countdown, heartbeat every 30 s while visible, Lock button; the player goes on lock) and the dev unlock removed
+  (`open --vault`, the stdin secret, HUB_DEV_VAULT; `vault dev-create` stays until `vault setup`): **done**.
+  Still to do: 4 `vault setup|status|lock`, doctor; 5 probe 13 and docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.
