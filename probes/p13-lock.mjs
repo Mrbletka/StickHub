@@ -52,7 +52,7 @@ async function makeVault(home, kdf) {
 }
 
 /** A probe hub on a random port in its own home. */
-async function startHub(base, name, o) {
+async function startHub(base, name, o = {}) {
   const home = join(base, name);
   const passphrase = await makeVault(home, o.kdf);
   const hub = await createHub({ root: ROOT, home, dataDir: join(base, `${name}-data`), port: 0, portRange: { from: 24300, to: 24349 },
@@ -70,7 +70,7 @@ async function startHub(base, name, o) {
  * @param {{kdf?: object, autoLockSeconds?: number}} [o]  tests only: tiny KDF settings, a shorter auto-lock
  */
 export async function measureLock(r, base, o = {}) {
-  const a = await startHub(base, 'p13a', o);
+  const a = await startHub(base, 'p13a', { kdf: o.kdf }); // the default auto-lock (5 min): it must not fire in the middle
   try {
     // unlock, and how fast the hub answers meanwhile (Argon2id runs on Node's async API)
     const pings = [];
@@ -112,9 +112,10 @@ export async function measureLock(r, base, o = {}) {
   try {
     await b.api('/api/vault/unlock', { method: 'POST', body: { method: 'passphrase', secret: b.passphrase } });
     await b.hub.procman.start('pocket-timer');
+    await b.api('/api/vault/heartbeat', { method: 'POST' }); // the last sign of a visible page: the wait starts now
     const t2 = performance.now();
     while (b.hub.vault.state !== 'locked' && performance.now() - t2 < (secs + 20) * 1000) await sleep(100);
-    r.add(`auto-lock with autoLockSeconds=${secs}, no heartbeat`, b.hub.vault.state === 'locked'
+    r.add(`auto-lock with autoLockSeconds=${secs}, no heartbeat after the app started`, b.hub.vault.state === 'locked'
       ? `locked after ${(ms(t2) / 1000).toFixed(1)} s (${b.hub.vault.status().lastLock?.reason}); app stopped: ${b.hub.procman.view('pocket-timer').status === 'stopped' ? 'yes' : 'NO'}`
       : `NOT locked after ${secs + 20} s`);
   } finally {

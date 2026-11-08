@@ -247,6 +247,8 @@ export class ProcessManager extends EventEmitter {
       try {
         return await engine.start({ app, port, startTimeoutMs: this.startTimeoutMs, env, log: (stream, line) => this.#log(app.id, stream, line) });
       } catch (e) {
+        // The vault locked meanwhile (its lock revoked the app's token and stopped what ran): say that, try nothing more.
+        if (this.startBlock?.()) throw Object.assign(new Error('The vault locked while the app was starting.'), { code: 'LOCKED' });
         const clash = /EADDRINUSE|health check failed: (ECONNRESET|ECONNREFUSED|EPIPE)/.test(e.message);
         if (!clash || tried.size >= 2 || Number.isInteger(app.manifest.port)) throw e;
         tried.add(port);

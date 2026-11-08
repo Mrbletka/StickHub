@@ -15,14 +15,14 @@ const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'p13t-')); roots.push(d
 
 test('probe 13, automatic part: opens, both apps stop, token revoked, 403 x5 then 429, auto-lock', async () => {
   const r = new Report();
-  await measureLock(r, tmp(), { kdf: SMALL_KDF, autoLockSeconds: 1 });
+  await measureLock(r, tmp(), { kdf: SMALL_KDF, autoLockSeconds: 2 }); // 2 s: room for a slow phone to start the app
   const t = r.toString();
   assert.match(t, /unlock with the real passphrase \(Argon2id\): opened in \d+ ms/);
   assert.match(t, /lock with 2 apps running .*: locked in \d+ ms; apps stopped: yes/);
   assert.match(t, /data token after the lock: 401: revoked \(good\)/);
   assert.match(t, /wrong passphrase x6 .*: 403, 403, 403, 403, 403, 429 \(wait 2 s\)/);
   assert.match(t, /then the right one .*: 403, 429 \(wait 4 s\)/);
-  assert.match(t, /auto-lock with autoLockSeconds=1, no heartbeat: locked after [\d.]+ s \(auto\); app stopped: yes/);
+  assert.match(t, /auto-lock with autoLockSeconds=2, no heartbeat after the app started: locked after [\d.]+ s \(auto\); app stopped: yes/);
 });
 
 test('probe 13, by hand: the person types the passphrase on the lock screen, the answers are recorded', async () => {

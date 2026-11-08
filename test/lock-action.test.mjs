@@ -191,3 +191,14 @@ test('the service worker never touches /api/ (vault answers are never cached)', 
   const sw = await readFile(join(ROOT, 'hub', 'ui', 'sw.js'), 'utf8');
   assert.match(sw, /url\.pathname\.startsWith\('\/api\/'\)[^\n]*return;/);
 });
+
+test('a lock while an app starts: the start ends with a clear message, nothing runs after the lock', async () => {
+  const { hub } = await setup();
+  const start = hub.procman.start('keeper').then(() => 'started', (e) => e.message);
+  await new Promise((r) => setTimeout(r, 30)); // the app is starting
+  await hub.vault.lock('button');
+  const got = await start;
+  await hub.procman.ops.get('keeper')?.catch(() => {}); // a stop the lock queued behind the start
+  assert.ok(got === 'started' || got === 'The vault locked while the app was starting.', got);
+  assert.notEqual(hub.procman.view('keeper').status, 'running', 'nothing runs while locked');
+});
