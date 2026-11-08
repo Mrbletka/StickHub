@@ -60,6 +60,16 @@ node hub/cli.mjs vault export <vault-folder> <dest-folder> [--paper]        # de
 node hub/cli.mjs vault dev-create [<folder>]   # DEV ONLY: a test vault (default ~/.stickhub/vault-dev)
 node hub/cli.mjs open --vault [<folder>]       # DEV ONLY: type the passphrase, the hub runs with the vault open
 ```
+### Try it (DEV ONLY)
+```sh
+cd ~/StickHub && git pull
+node hub/cli.mjs vault dev-create   # write down the 5 words and the paper code, then type the words back
+node hub/cli.mjs open --vault       # type the words: the hub opens with the vault (a running hub restarts)
+node hub/cli.mjs hub stop           # stop it; open --vault starts it again
+ls -R ~/.stickhub/vault-dev         # only vault.json, vault.bak.json, _index/*.vx, _packs/*.vx: no note names
+```
+Then open the Notebook in the hub and write notes: they go into the encrypted vault. Tap Counter counts into it too.
+
 **DEV ONLY until the lock screen (job 4).** `dev-create` shows a generated 5-word passphrase and a paper code once on
 the terminal, asks you to type the passphrase back, and only then writes the vault. `open --vault` asks for the
 passphrase (no echo) and starts the hub with the vault open in its memory: apps with `"data": "hubfs"` read and write
@@ -75,7 +85,8 @@ files are **not encrypted**: delete them when you no longer need them. See `docs
 - Data (`data/<app-id>/`): both ways, three-way by hash. Both sides changed: the phone's file keeps the name, the
   stick's version is kept as `name.conflict-<time>.ext` on both sides. Deleted files go to `.trash/<date>/`.
 - A running app's data waits ("pending") and syncs when the app stops.
-- Apps save through their own server into `HUB_DATA_DIR`. Browser storage (localStorage, IndexedDB) is not synced.
+- Apps save through their own server with `lib/hubfs.mjs` (plain files in `HUB_DATA_DIR`, or the vault with
+  `--vault`). Browser storage (localStorage, IndexedDB) is not synced and is cleared when the hub stops the app.
 - On a PC (or for tests) `STICKHUB_MOUNTS=/path/one:/path/two` makes folders act as sticks.
 
 ## Add an app
@@ -117,9 +128,13 @@ hub/sync/             scan, plan, run (journal, resume, cancel), hub service, sa
 hub/platform/         adapters: volumes (mountinfo), Termux actions, git
 hub/watcher.mjs       opens the hub when the stick is plugged in
 hub/auth.mjs          token and one-time login codes
-hub/vault/            encrypted vault: crypto and the store (not wired into the hub yet; see docs/VAULT-DESIGN.md)
+hub/vault/            encrypted vault: crypto and the store (see docs/VAULT-DESIGN.md)
+hub/dataapi/          the data API: apps reach the vault over ~/.stickhub/run/data.sock (see its README)
+hub/appkit/hubfs.mjs  the data client apps copy as lib/hubfs.mjs (node:fs-like; the vault or plain files)
+hub/devvault.mjs      DEV ONLY: vault dev-create, the passphrase for open --vault (until the lock screen)
 hub/proc.mjs          leftover app processes after a hard kill (checked by /proc/<pid>/cmdline)
 hub/ui/player.js      full-screen app player; hub/ui/sw.js + offline.html: PWA
+hub/ui/clear.js       clears an app's browser storage (its /__hub/clear in a hidden frame) before the hub stops it
 hub/ui/               the web UI (vanilla)
 apps/                 the apps (tap-counter, pocket-timer are samples)
 probes/               phone-only measurements, results in docs/PROBES.md
@@ -131,7 +146,7 @@ Every call needs the header `X-Hub-Token`, except `GET /api/ping`, `POST /api/au
 
 | Method | Path | |
 |---|---|---|
-| GET | /api/ping | is the hub running (open) |
+| GET | /api/ping | is the hub running, mode, vault on (open) |
 | POST | /api/auth/exchange | body `{"code"}`: one-time code -> token (open) |
 | POST | /api/auth/code | a fresh one-time login link |
 | POST | /api/hub/stop | stop the hub and its apps |
@@ -144,7 +159,7 @@ Every call needs the header `X-Hub-Token`, except `GET /api/ping`, `POST /api/au
 | GET | /api/stick | stick and sync status |
 | POST | /api/sync?what=all\|data\|code | start a sync in the background |
 | POST | /api/sync/cancel | cancel the running sync |
-| GET | /api/events[?logs=:id] | SSE: `apps`, `app`, `status`, `log` |
+| GET | /api/events[?logs=:id] | SSE: `apps`, `app`, `status`, `log`, `clear` (apps about to stop: clear their browser storage) |
 
 ## Credits
 - `hub/vault/wordlist-eff-large.txt`: the **EFF Large Wordlist for Passphrases** by the

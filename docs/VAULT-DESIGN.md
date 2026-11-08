@@ -1,7 +1,7 @@
 # Encrypted vault: design (reviewed)
 
-Status: **design only, nothing is built.** Reviewed by Claude and Fabian on 2026-11-04; the decisions are in
-section 0 and are folded into the sections below.
+Status: reviewed by Claude and Fabian on 2026-11-04; the decisions are in section 0 and are folded into the sections
+below. **Being built** in the order of section 11: steps 1-3 are built (step 3 with a DEV ONLY unlock until step 4).
 Keystore and Node crypto facts were measured on the phone by probe 9 (docs/PROBES.md, runs 7 and 8) and are marked
 **(p9)**. Numbers marked "measured" come from docs/PROBES.md; "estimate" means not measured yet.
 
@@ -464,7 +464,7 @@ system. So:
 - Every write is atomic by construction, so every app behaves like `atomicData: true` and sync no longer waits for
   apps to stop ("pending" goes away).
 
-**Built (job 3a), not wired into the hub yet:** the server in `hub/dataapi/` and the client `hub/appkit/hubfs.mjs`.
+**Built (job 3a), wired into the hub (job 3b, below):** the server in `hub/dataapi/` and the client `hub/appkit/hubfs.mjs`.
 The wire format, limits, the error table, every difference from `node:fs` and the honest limits are in
 `hub/dataapi/README.md`. In short: HTTP over the socket (run dir 0700, socket 0600, path up to 107 bytes, a stale
 socket removed only if nobody answers); one random 32-byte token per app start, compared in constant time, the same
@@ -472,8 +472,35 @@ socket removed only if nobody answers); one random 32-byte token per app start, 
 checked, then prefixed with `<appId>/`; bodies up to 32 MiB; 64 connections (the client keeps 8 requests per app in flight, the rest queue); 60 s request timeout; events: last 1000
 per app, long poll up to 25 s, `lost` to list again. Any process of the same Android user can open the socket but
 needs the token, and `/proc/<pid>/environ` is readable by that user: malware on an unlocked phone stays out of scope
-(section 2). Next: 3b (procman gives apps the socket and a token; `HUB_DATA_DIR` goes away when the vault is on), 3c
-(the Notebook and the sample apps use the client).
+(section 2).
+
+**Wired (job 3b), DEV ONLY unlock until the lock screen (step 4):**
+- `node hub/cli.mjs vault dev-create [<folder>]` (`hub/devvault.mjs`) makes a vault with a generated 5-word passphrase
+  and a paper code, shows both once on the terminal (never a file, argv or env), asks for the passphrase back and only
+  then writes it; the screen is cleared after. Default folder `~/.stickhub/vault-dev`: the phone replica of 6.1
+  (`~/StickHub/data/`) does not fit yet, because the plain app data still lives there until the migration (step 6).
+  One replica; the stick replica comes with sync (step 5).
+- `node hub/cli.mjs open --vault [<folder>]` asks for the passphrase (no echo) and starts the hub with
+  `HUB_DEV_VAULT=<folder>` (a `HUB_` name, so apps never see it) and the passphrase on the hub's stdin (a pipe). The hub
+  opens the store in its memory and serves the data API on `~/.stickhub/run/data.sock`. A wrong passphrase: exit 3,
+  the CLI asks again (3 tries). Without `--vault` the hub works as before.
+- `"data"` in app.json: `"hubfs"` (lib/hubfs.mjs), `"files"` (plain `HUB_DATA_DIR`, the default for node-server) or
+  `"none"` (the default for static). With the vault on, procman gives `"hubfs"` apps `HUB_DATA_SOCKET` and a fresh
+  `HUB_DATA_TOKEN` per start (issued before the start, revoked on stop, crash or a failed start) and never
+  `HUB_DATA_DIR`; `"files"` apps show "This app saves plain files..." on their tile and do not start; `"none"` apps get
+  nothing. Tokens never reach a log line, the ring log, the status, the pid file or the UI.
+- The plain data sync (`planData`) does not touch `data/` while the vault is on (the stick status, the stick sheet and
+  `sync status` say so; `sync plan|run` skip data); vault sync is step 5. Closing the hub stops the apps, then closes
+  the data API, then the store (which waits for its running step).
+- hubfs keeps at most 8 requests in flight and queues the rest in order (100 parallel calls used to fail with
+  ECONNRESET); changes to one path keep their order; every request ends within 60 s. `readdir` is one request with
+  `depth: 1` (plain files: one directory read, no file is read; `tree()` entries carry no id there).
+- `hub new` copies `hub/appkit/hubfs.mjs` into new node-server apps as `lib/hubfs.mjs`; test/app-rules checks every
+  copy is byte-equal, that every app keeps its data through hubfs or has none, never names `HUB_DATA_DIR`, and keeps no
+  data in browser storage (localStorage only in listed UI-state files).
+- Honest limits: the passphrase is a JS string in the CLI and the hub (strings cannot be zeroed); the hub must be
+  started from a terminal to unlock; no auto-lock; a hub killed hard leaves the socket file (the next start removes it
+  when nobody answers); the dev vault is never synced to the stick.
 
 ### 8.2 The atomic write on encrypted files
 An encrypted file is never changed in place. A change:
@@ -537,9 +564,26 @@ the stick is plugged in.
   the hub page loads that app's `/__hub/clear` in a hidden frame; the client's server helper answers it with
   `Clear-Site-Data: "storage"`, which makes Chrome drop that origin's storage; (2) the app page also stores the app's
   start id next to its state and drops the state when the id changed (covers a crash, where step 1 never ran).
-  Probe 10 checks that Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`.
+  Probe 12 checks that Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`.
 - The name "vault" inside the Notebook (`HUB_DATA_DIR/vault/`) is a different thing; it may be renamed to avoid
   confusion.
+
+**Built (job 3c):** the Notebook's `lib/vault.mjs` works on hubfs in both modes; `list` and `index` are one `tree()`
+call each; a save sends the content id as `ifMatch` (and a version is read before and after the text, so they belong
+together); rename, move and delete are moves (index operations in the hub: a folder of 300 notes moves in one commit
+with no new pack); case-only renames go through a temporary name (exFAT); `.deleted/` stays a folder in its namespace
+and Empty puts it into the vault trash (30 days); limits stay (1 MB, 5,000 files), names are now at most 120 characters
+(the vault's limit, was 200) and a whole path at most 194. `lib/changes.mjs` follows `watch()` and the page long-polls
+`GET /api/changes` while it is visible (`lost`: list again); the focus check stays, since plain-file mode sees only the
+Notebook's own changes. Errors are fixed texts: never the vault folder, the socket or the token. Every old test runs in
+both modes. `lib/atomic.mjs` is gone. tap-counter is ported too; pocket-timer is static and needs nothing.
+Browser state: `hubRoutes()` in hubfs answers `/__hub/clear` and `/__hub/start` in every app (the static engine for
+static apps). Before any stop (stop, restart, hub stop, stick pulled), procman's `beforeStop` makes the hub send a
+`clear` event to the open hub pages; each loads the app's `/__hub/clear` in a hidden sandboxed frame
+(`hub/ui/clear.js`, job 4 calls the same on lock) and the hub waits 400 ms, only if a page is connected. Honest limits:
+with no hub page open (or Android froze it), nothing is cleared at the stop, and the Notebook's start-id check drops
+the state at its next start; an open app page could write its state again after the clear (the start-id check covers
+that too).
 
 ### 8.6 Compaction and cleanup
 - Runs inside the store's write queue, as `maintain()`: purge trash older than 30 days (store clock), compact if worth
@@ -833,6 +877,19 @@ one deletion, `close()` does not wait for pending steps, the automatic chain giv
 reads at most 12 packs per call. Probe 10 gained the stepped worst case, the steady state with automatic
 maintenance on, and the pull test with automatic maintenance on.
 
+### v1 step 3: data API, hub wiring, app ports: built (jobs 3a, 3b+3c)
+Job 3a: the data API and hubfs (8.1). Job 3b+3c, one commit each: 0a hubfs queue (8 in flight) and 64 connections;
+0b shallow `readdir`; 1 dev vault and hub wiring (8.1, DEV ONLY unlock); 2 scaffold copies hubfs, app rules, no plain
+data sync with the vault on; 3 tap-counter; 4 the Notebook (8.5); 5 browser state on stop and probe 12. Also fixed on
+the way: two flaky tests (one could keep `node --test` from ending) and test ports moved below the ephemeral range.
+Deviations, with the reason:
+1. The dev vault lives in `~/.stickhub/vault-dev`, not in the clone's `data/` (6.1): the plain app data is still there
+   until the migration.
+2. Static apps get no `lib/hubfs.mjs` from `hub new`: they have no server that could use it (`"data": "none"`).
+3. Clearing browser state is driven by the hub (an SSE `clear` event before the stop, then 400 ms), not by the page
+   alone: the stick-pulled stop comes from the hub, and the page cannot act before it.
+4. Notebook names: 120 characters at most (was 200), to match the vault's path rules (6.6).
+
 ### v1 step 2c: faster maintenance: built
 As described in 8.6: size tiers (`compact.tierOf`), compaction reads each chosen pack once (`PackReader.withPack`,
 each segment decrypted at most once), and the index cache for cleanup runs. On a container disk probe 10 went from
@@ -846,8 +903,8 @@ steady max 933 ms, a save behind maintain() 538 ms, worst-case total 16.0 s (bou
 
 ## 12. Still open
 All twelve review questions are decided (section 0). Left for later measurement, not for design:
-1. Probe 10 (v1): `Clear-Site-Data` on `http://127.0.0.1:<port>` in Chrome; the field checks of 7.9; vault costs on
-   the stick.
+1. Probe 12: `Clear-Site-Data` on `http://127.0.0.1:<port>` in Chrome and vault costs through hubfs (written, not run
+   on the phone yet). Probe 10 (v1): the field checks of 7.9.
 2. Probe 10 (v2): plug-in to open on both paths; whether the page ever needs reopening after the fingerprint box.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
 4. Decided (job 2, Part A): trim both ends, collapse whitespace runs to one space, no case folding (4.2).

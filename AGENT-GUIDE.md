@@ -21,7 +21,9 @@ Phone first. A Windows launcher comes later: design for it, do not build it yet.
 - Zero dependencies: Node.js built-ins only. No npm packages, no build step, no native addons, no CDN. Vanilla HTML/CSS/JS in the browser.
 - Node 24 (v24.22.1 on the phone). ESM (.mjs) everywhere. No package.json needed.
 - Works fully offline.
-- Tests with node:test (`node --test`). They must pass on the phone.
+- Tests with node:test (`node --test`). They must pass on the phone. Test ports are 27xxx (below the ephemeral range
+  32768-60999, so no client connection can take them); a test that opens a server closes it in after() too, or one
+  failing test keeps `node --test` from ending.
 - Small files (about 400 lines max), clear modules, JSDoc on public functions, explicit error handling, no silent catches.
 - Never `shell: true`, never eval. Spawn with argument arrays. Every external command call has a timeout.
 - Secrets (the access token) live outside the synced tree (~/.stickhub/) and never go on the stick.
@@ -119,6 +121,9 @@ whenever setup gets a new step.
 - node-server apps: listen on process.env.PORT at 127.0.0.1, keep data only through `lib/hubfs.mjs` on the app's own
   server (`"data": "hubfs"`; the starter has GET/PUT /api/save), never HUB_DATA_DIR or node:fs for data, stop cleanly
   on SIGTERM, Node built-ins only, run alone with `PORT=4100 node server.mjs` (hubfs then uses plain files in ./data).
+  First line of the request handler: `if (hubfs.hubRoutes(req, res)) return;` (/__hub/clear and /__hub/start: the hub
+  clears the app's browser storage before it stops it). A page that keeps UI state in localStorage stores the start id
+  from `__hub/start` next to it and drops the state when it changed (see the Notebook's public/js/store.mjs).
 - static apps: files only, no saves.
 - Never import or require anything from HUB_DATA_DIR (in the hub or in an app): data is data, never code.
   It may live on the stick. A test (test/app-rules.test.mjs) checks every app for this.
@@ -246,7 +251,10 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   `hubRoutes()` in hubfs answers `/__hub/clear` (Clear-Site-Data) and `/__hub/start`, procman's beforeStop makes
   the hub page load the clear URLs in hidden frames before any stop (hub/ui/clear.js), the Notebook drops its UI
   state when the start id changed; probe 12; test ports moved to 27xxx (below the ephemeral ports): **done**.
-  Still to do: docs.
+  Docs (design 8.1, 8.5, 11, 12; hub/dataapi/README.md; README "Try it"): **done**. **Job 3b+3c done** (branch
+  claude/vault-hub-wiring-apps-n8vkx0, not yet run on the phone). Next: Fabian runs probe 12 (Clear-Site-Data in
+  Chrome, vault costs; record it in docs/PROBES.md), then job 4 (lock screen; it replaces hub/devvault.mjs and calls
+  hub/ui/clear.js on lock).
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

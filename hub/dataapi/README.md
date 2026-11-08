@@ -108,8 +108,19 @@ Differences from `node:fs/promises`:
   through this process.
 - Files up to 32 MiB through the API.
 
+## The page routes every app has (`hubRoutes` in hubfs.mjs)
+`GET /__hub/clear` answers `Clear-Site-Data: "storage"`: the hub page loads it in a hidden sandboxed frame right
+before the hub stops the app (SSE event `clear`, then 400 ms, only while a hub page is open), so Chrome drops that
+app's localStorage, IndexedDB and the rest. `GET /__hub/start` answers `{startId}` (new at every start): an app page
+keeps its UI state next to it and drops the state when it changed. Call `if (hubRoutes(req, res)) return;` first in the
+app's request handler; the static engine does it for static apps. Design 8.5; probe 12 checks Chrome on the phone.
+
 ## Honest limits
 - Any process of the same Android user can open the socket. It still needs a token. Tokens live in the app's
   environment, and `/proc/<pid>/environ` is readable by that same user. Malware on an unlocked phone is out of scope
   (design section 2).
-- Tokens live only in memory; a hub restart gives every app a new one.
+- Tokens live only in memory; a hub restart gives every app a new one (the apps restart with the hub).
+- A write that timed out on the client (60 s) may still have landed. A hub killed hard leaves the socket file; the
+  next start removes it only when nobody answers on it.
+- Plain-file mode is for an app that runs alone: `ifMatch` is checked, then written (two processes can still race),
+  `watch()` sees only this process's changes, links are never followed (EINVAL).
