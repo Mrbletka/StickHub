@@ -526,6 +526,8 @@ pack and one index (group commit). The header is the only file changed in place:
 | maintain() after 100 piled-up saves | - | 10 s; a save behind it waited 13.6 s (run 10, one big task) |
 | the same, in steps | - | run 12 (job 2c): 16.0 s in 30 steps for 238 deleted files (run 11: 21.6 s); a save behind it waited 538 ms (target < 1.5 s met) |
 | steady state: 100 saves, automatic maintenance on | - | run 12: median 388 ms, p95 678 ms, max 933 ms (target max < 1.5 s met; run 11: max 1702 ms) |
+| Notebook save through the data API, vault on the stick | 1 safe write, about 165 ms | run 14: p50 254 ms, p95 587 ms, max 603 ms; its change event 2-5 ms later |
+| list a folder of 230 notes | plain files on the stick: 57 ms | run 14: 5.5 ms through the data API (the index is in memory) |
 Run 10 showed a save waiting behind the whole maintain() task. Job 2b cuts maintenance into steps (8.6): a save
 waits for at most one step, about 10 deleted files (0.55 s on the stick) or one compaction call.
 So the vault is slower than today only for a single save in data-on-stick mode (1.4x), and much faster for
@@ -564,7 +566,8 @@ the stick is plugged in.
   the hub page loads that app's `/__hub/clear` in a hidden frame; the client's server helper answers it with
   `Clear-Site-Data: "storage"`, which makes Chrome drop that origin's storage; (2) the app page also stores the app's
   start id next to its state and drops the state when the id changed (covers a crash, where step 1 never ran).
-  Probe 12 checks that Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`.
+  Probe 12 (run 14, 2026-11-08): Chrome on the phone honours `Clear-Site-Data` on `http://127.0.0.1:<port>`, loaded in
+  a hidden sandboxed frame from the hub's port.
 - The name "vault" inside the Notebook (`HUB_DATA_DIR/vault/`) is a different thing; it may be renamed to avoid
   confusion.
 
@@ -903,8 +906,8 @@ steady max 933 ms, a save behind maintain() 538 ms, worst-case total 16.0 s (bou
 
 ## 12. Still open
 All twelve review questions are decided (section 0). Left for later measurement, not for design:
-1. Probe 12: `Clear-Site-Data` on `http://127.0.0.1:<port>` in Chrome and vault costs through hubfs (written, not run
-   on the phone yet). Probe 10 (v1): the field checks of 7.9.
+1. Done (probe 12, run 14): Chrome honours `Clear-Site-Data` on `http://127.0.0.1:<port>`; vault costs through hubfs
+   on the phone and the stick are in docs/PROBES.md. Still to do in probe 10 (v1): the field checks of 7.9.
 2. Probe 10 (v2): plug-in to open on both paths; whether the page ever needs reopening after the fingerprint box.
 3. Fabian: whether to move to a fresh stick before migrating (decision 8).
 4. Decided (job 2, Part A): trim both ends, collapse whitespace runs to one space, no case folding (4.2).

@@ -253,10 +253,11 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   `hubRoutes()` in hubfs answers `/__hub/clear` (Clear-Site-Data) and `/__hub/start`, procman's beforeStop makes
   the hub page load the clear URLs in hidden frames before any stop (hub/ui/clear.js), the Notebook drops its UI
   state when the start id changed; probe 12; test ports moved to 27xxx (below the ephemeral ports): **done**.
-  Docs (design 8.1, 8.5, 11, 12; hub/dataapi/README.md; README "Try it"): **done**. **Job 3b+3c done** (branch
-  claude/vault-hub-wiring-apps-n8vkx0, not yet run on the phone). Next: Fabian runs probe 12 (Clear-Site-Data in
-  Chrome, vault costs; record it in docs/PROBES.md), then job 4 (lock screen; it replaces hub/devvault.mjs and calls
-  hub/ui/clear.js on lock).
+  Docs (design 8.1, 8.5, 11, 12; hub/dataapi/README.md; README "Try it"): **done**. App-rules fix (storage use in
+  code, tracked apps, both starters): **done**.
+  **Job 3b+3c done: 94e1cad** (tested on the phone 2026-11-08: all tests pass; probe 12, docs/PROBES.md run 14:
+  Chrome honours Clear-Site-Data, a Notebook save on the stick p50 254 ms / p95 587 ms, listing 230 notes 5.5 ms).
+  Next: job 4 (lock screen; it replaces hub/devvault.mjs and calls hub/ui/clear.js on lock).
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

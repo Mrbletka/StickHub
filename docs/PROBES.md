@@ -304,3 +304,35 @@ What it means:
 What it means: the socket and token layer adds little. A small read is about 5-8 ms; a small write about 50-60 ms
 (a commit on the phone, run 12: about 40 ms; the p95 of 140 ms is the automatic maintenance steps). Events arrive
 within about 40-50 ms. Mode bits are as designed.
+
+## Run 14 - 2026-11-08: probe 12, the vault in the hub (code 94e1cad, job 3b+3c)
+`node --test` passed first (the command runs the probe only then). The stick was plugged in (exFAT, 61 GB free), so
+this is also the first data API run on the real stick (run 13 had none). Throwaway vaults, random keys.
+
+### Clear-Site-Data in Chrome (one tap)
+| Check | Result |
+|---|---|
+| the app frame (another port) stored a value in localStorage (control) | yes |
+| the value was still there before the clear (control) | yes |
+| after the hub page loaded the app's `/__hub/clear` in a hidden sandboxed frame (`hub/ui/clear.js`) | **gone: Chrome honours `Clear-Site-Data: "storage"` on `http://127.0.0.1:<port>`** |
+
+### Vault costs through hubfs
+| Step | Phone (Termux tmp) | Stick (exFAT) |
+|---|---|---|
+| readdir of a folder with 230 notes (one request, depth 1) | p50 7.6 ms, p95 14.3 ms | p50 5.5 ms, p95 5.7 ms |
+| the same folder as a whole tree (sizes and ids) | p50 5.5 ms, p95 7.4 ms | p50 4.7 ms, p95 6.9 ms |
+| 100 notes read at once (`Promise.all`) | 481 ms in all, none failed | 439 ms in all, none failed |
+| Notebook save (stat, then write with ifMatch) | p50 76 ms, p95 144 ms, max 257 ms | p50 254 ms, p95 587 ms, max 603 ms |
+| Notebook save -> its change event at the Notebook server | p50 78 ms, p95 148 ms, max 263 ms | p50 256 ms, p95 589 ms, max 606 ms |
+| full verify | OK | OK |
+| for comparison: plain files, readdir of 230 notes (hubfs plain-file mode) | p50 1.1 ms | p50 57 ms |
+
+What it means:
+- Clearing the apps' browser state before a stop works as designed (design 8.5); the start-id check stays for crashes.
+- A folder listing from the vault does not touch the disk (the index is in the hub's memory): about 5-8 ms on both,
+  10x faster than listing 230 plain files on the stick (57 ms). The test folder had no deep subtree, so depth 1 and
+  the whole tree send about the same; the gain of 0b shows only for folders with much below them.
+- 100 reads at once: none failed (100 parallel calls failed with ECONNRESET before 0a), about 4.5 ms per note.
+- A Notebook save on the stick costs about one commit (run 12: store save median 236 ms) plus a stat and a compare
+  read; the p95 of about 590 ms is the automatic maintenance steps (run 12: p95 678 ms, max 933 ms). The change event
+  reaches the Notebook server 2-5 ms after the save returns.
