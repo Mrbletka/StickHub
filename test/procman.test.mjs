@@ -8,6 +8,10 @@ import { isPortFree } from '../hub/ports.mjs';
 import { makeApps, http, GOOD_SERVER } from './helpers.mjs';
 
 const RANGE = { from: 27100, to: 27120 };
+const CLASH = `import { existsSync, writeFileSync } from 'node:fs';
+const mark = process.env.HUB_APP_DIR + '/tried';
+if (!existsSync(mark)) { writeFileSync(mark, '1'); console.error('Error: listen EADDRINUSE: address already in use'); process.exit(1); }
+`;
 let fx, pm;
 
 before(async () => {
@@ -28,6 +32,10 @@ before(async () => {
     noengine: { 'app.json': { id: 'noengine', name: 'N', engine: 'python' } },
     atomic: { 'app.json': { id: 'atomic', name: 'Atomic', engine: 'static', atomicData: true }, 'index.html': 'a' },
     fixed: { 'app.json': { id: 'fixed', name: 'Fixed', engine: 'static', port: 27100 }, 'index.html': 'f' },
+    // its first start finds its port taken (as when another program grabs it between the check and the listen)
+    clash: { 'app.json': { id: 'clash', name: 'Clash', engine: 'node-server', entry: 'server.mjs' }, 'server.mjs': CLASH + GOOD_SERVER },
+    fixedclash: { 'app.json': { id: 'fixedclash', name: 'FixedClash', engine: 'node-server', entry: 'server.mjs', port: 27119 },
+      'server.mjs': 'console.error("Error: listen EADDRINUSE: address already in use"); process.exit(1);' },
   });
   const { engines } = await loadEngines();
   pm = new ProcessManager({ engines, appsDir: fx.appsDir, dataDir: fx.dataDir, portRange: RANGE, startTimeoutMs: 6000 });
@@ -131,4 +139,15 @@ test('atomicData apps do not block sync; fixed ports are kept free for their app
   assert.equal(f.port, 27100);
   await pm.stopAll();
   void a;
+});
+
+test('a port taken between the check and the listen: an auto-port app tries one more port; a fixed port does not', async () => {
+  const v = await pm.start('clash');
+  assert.equal(v.status, 'running');
+  const lines = pm.logs('clash').map((l) => l.text);
+  assert.ok(lines.some((t) => /seems taken by another program .*EADDRINUSE.*trying another port/.test(t)), lines.join('\n'));
+  assert.equal(lines.filter((t) => t.startsWith('starting on port')).length, 2);
+  await pm.stop('clash');
+  await assert.rejects(pm.start('fixedclash'), /quit while starting: Error: listen EADDRINUSE/);
+  assert.ok(!pm.logs('fixedclash').some((l) => /trying another port/.test(l.text)));
 });

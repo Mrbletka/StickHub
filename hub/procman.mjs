@@ -137,10 +137,7 @@ export class ProcessManager extends EventEmitter {
 
       this.#set(id, { status: 'starting', error: null });
       try {
-        const port = await this.#pickPort(app);
-        const env = { PORT: String(port), HUB_APP_ID: id, HUB_APP_DIR: app.dir, ...(await this.#dataEnv(app)) };
-        this.#log(id, 'sys', `starting on port ${port}`);
-        const handle = await engine.start({ app, port, startTimeoutMs: this.startTimeoutMs, env, log: (stream, line) => this.#log(id, stream, line) });
+        const handle = await this.#startOnFreePort(app, engine);
         this.#set(id, { status: 'running', port: handle.port, url: handle.url, startedAt: Date.now(), handle });
         if (handle.pid && handle.argv) await this.pidFile?.add(id, handle.pid, handle.argv);
         this.#log(id, 'sys', `running at ${handle.url}`);
@@ -236,13 +233,35 @@ export class ProcessManager extends EventEmitter {
     return { HUB_DATA_DIR: dataDir };
   }
 
-  async #pickPort(app) {
+  /**
+   * Start the app on a port. Another program can take the port between the check and the app's own listen (seen on
+   * the phone: the health check then reached that program and was reset). For an app with "port": "auto" that one
+   * case gets up to two more tries on other ports; everything else fails at once.
+   */
+  async #startOnFreePort(app, engine) {
+    const tried = new Set();
+    for (;;) {
+      const port = await this.#pickPort(app, tried);
+      const env = { PORT: String(port), HUB_APP_ID: app.id, HUB_APP_DIR: app.dir, ...(await this.#dataEnv(app)) };
+      this.#log(app.id, 'sys', `starting on port ${port}`);
+      try {
+        return await engine.start({ app, port, startTimeoutMs: this.startTimeoutMs, env, log: (stream, line) => this.#log(app.id, stream, line) });
+      } catch (e) {
+        const clash = /EADDRINUSE|health check failed: (ECONNRESET|ECONNREFUSED|EPIPE)/.test(e.message);
+        if (!clash || tried.size >= 2 || Number.isInteger(app.manifest.port)) throw e;
+        tried.add(port);
+        this.#log(app.id, 'sys', `port ${port} seems taken by another program (${e.message}); trying another port`);
+      }
+    }
+  }
+
+  async #pickPort(app, avoid = new Set()) {
     if (Number.isInteger(app.manifest.port)) {
       if (!(await isPortFree(app.manifest.port))) throw new Error(`Port ${app.manifest.port} is already in use`);
       return app.manifest.port;
     }
     // Fixed ports of other apps are never handed out automatically, even while those apps are stopped.
-    const taken = new Set([...this.state.values()].map((s) => s.port).filter(Boolean));
+    const taken = new Set([...avoid, ...[...this.state.values()].map((s) => s.port).filter(Boolean)]);
     for (const a of this.apps.values()) if (a.id !== app.id && Number.isInteger(a.manifest?.port)) taken.add(a.manifest.port);
     return findFreePort(this.portRange, taken);
   }

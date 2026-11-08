@@ -42,8 +42,13 @@ export default {
       child.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); });
       child.once('error', (e) => { ctx.log('err', `could not start: ${e.message}`); exited = true; resolve({ code: null, signal: null, error: e }); });
     });
+    let lastErr = ''; // the app's last error line, for a start that fails (e.g. "listen EADDRINUSE")
     for (const [name, stream] of [['out', child.stdout], ['err', child.stderr]]) {
-      createInterface({ input: stream, crlfDelay: Infinity }).on('line', (line) => ctx.log(name, line));
+      createInterface({ input: stream, crlfDelay: Infinity }).on('line', (line) => {
+        // the line that names the error ("Error: listen EADDRINUSE ..."), not the stack or "Node.js v24" after it
+        if (name === 'err' && /^\s*\w*Error\b/.test(line)) lastErr = line.trim().slice(0, 200);
+        ctx.log(name, line);
+      });
     }
 
     // graceMs: how long the app gets after SIGTERM (stick removed: short, so everything stops within 2 s).
@@ -58,7 +63,7 @@ export default {
 
     const open = await waitForPort(port, { timeoutMs: ctx.startTimeoutMs ?? 15_000, alive: () => !exited });
     if (!open) {
-      const why = exited ? 'the app quit while starting (see the log)' : `nothing answered on port ${port} in time. Does the app use process.env.PORT?`;
+      const why = exited ? `the app quit while starting${lastErr ? `: ${lastErr}` : ' (see the log)'}` : `nothing answered on port ${port} in time. Does the app use process.env.PORT?`;
       await stop();
       throw new Error(why);
     }
