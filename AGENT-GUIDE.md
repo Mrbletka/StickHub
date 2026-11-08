@@ -114,16 +114,20 @@ whenever setup gets a new step.
 ## Making apps
 - Start every app with `node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`. It makes apps/<id>/ with
   app.json, a starter, a placeholder icon.svg and a README.md with the rules. It never overwrites an existing folder.
-- node-server apps: listen on process.env.PORT at 127.0.0.1, keep saves in process.env.HUB_DATA_DIR through the app's own
-  server (the starter has GET/PUT /api/save with atomic writes), stop cleanly on SIGTERM, Node built-ins only,
-  run alone with `PORT=4100 node server.mjs`.
+  node-server apps also get `lib/hubfs.mjs`, a copy of hub/appkit/hubfs.mjs (test/app-rules checks every copy is
+  byte-equal: after changing hubfs, copy it into every app again). Static apps have no server, so no hubfs.
+- node-server apps: listen on process.env.PORT at 127.0.0.1, keep data only through `lib/hubfs.mjs` on the app's own
+  server (`"data": "hubfs"`; the starter has GET/PUT /api/save), never HUB_DATA_DIR or node:fs for data, stop cleanly
+  on SIGTERM, Node built-ins only, run alone with `PORT=4100 node server.mjs` (hubfs then uses plain files in ./data).
 - static apps: files only, no saves.
 - Never import or require anything from HUB_DATA_DIR (in the hub or in an app): data is data, never code.
   It may live on the stick. A test (test/app-rules.test.mjs) checks every app for this.
 - `"port": <number>` = fixed port (never handed to another app): use it when the app keeps UI state in localStorage.
 - `"atomicData": true` only if the app writes data exclusively with temp file + rename: then sync copies its data
   while it runs (no "pending").
-- Browser storage (localStorage, IndexedDB) is not synced, so no saves there.
+- Browser storage (localStorage, IndexedDB) is not synced and not encrypted, so no saves there. test/app-rules allows
+  localStorage only in listed UI-state files (Notebook: public/js/store.mjs), and no IndexedDB, Cache Storage, cookies
+  or sessionStorage at all.
 - Apps open full screen in the hub player (iframe, own port). Phone first: about 423x930 CSS px, touch, no hover.
   Weak GPU, two fast cores: 2D canvas or light WebGL, aim for 60 fps.
 - Use relative URLs inside an app (`fetch('api/save')`, not `/api/save` with a host), so it also works when run alone.
@@ -233,8 +237,9 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   0a hubfs keeps at most 8 requests in flight (queue, order of changes per path, 60 s timeout), server 64
   connections: **done**. 0b shallow readdir (one directory read / `depth: 1`), plain-mode tree ids only from stat:
   **done**. 1 dev vault (`vault dev-create`, `open --vault`, hub/devvault.mjs, DEV ONLY), data API in the hub,
-  procman tokens, `"data"` in app.json, close order: **done**. Still to do: 2 scaffold copies hubfs + app-rules +
-  sync off in vault mode; 3 tap-counter; 4 Notebook; 5 `/__hub/clear` + probe 12; docs.
+  procman tokens, `"data"` in app.json, close order: **done**. Fix of two flaky tests (the rare hang of
+  `node --test`): **done**. 2 scaffold copies hubfs + app-rules + no plain data sync in vault mode (`sync status`):
+  **done**. Still to do: 3 tap-counter; 4 Notebook; 5 `/__hub/clear` + probe 12; docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

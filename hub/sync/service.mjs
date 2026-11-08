@@ -16,7 +16,8 @@ const AFTER_STOP_DELAY_MS = 1500;
 export class StickService extends EventEmitter {
   /**
    * @param {{root: string, procman: import('../procman.mjs').ProcessManager, listVolumes?: Function, git?: object,
-   *   device?: string, pollMs?: number, autoSync?: boolean}} o  pollMs 0 = no polling (tests call poll())
+   *   device?: string, pollMs?: number, autoSync?: boolean, dataSync?: boolean, dataSyncOff?: 'vault'|'data-on-stick'}} o
+   *   pollMs 0 = no polling (tests call poll()); dataSync false: only code is copied, dataSyncOff says why
    */
   constructor(o) {
     super();
@@ -68,6 +69,8 @@ export class StickService extends EventEmitter {
       code: this.code, last: this.last, pending: this.pending, conflicts: this.conflicts,
       sync: this.run ? { running: true, ...this.progress } : { running: false },
       portable: this.#portable(),
+      // vault: the app data is in the vault, so the plain data sync (planData) never touches data/ (vault sync: job 5)
+      dataSync: this.o.dataSync === false ? { on: false, why: this.o.dataSyncOff || 'off' } : { on: true },
     };
   }
 

@@ -43,6 +43,7 @@ The hub and its apps still run from the clone; only the app data (`HUB_DATA_DIR`
 ```sh
 node hub/cli.mjs stick status                      # what is plugged in
 node hub/cli.mjs stick init --name "My stick"      # create HUB/ (never touches an existing HUB/ without --force)
+node hub/cli.mjs sync status                       # stick, and whether app data is synced (not with the vault on)
 node hub/cli.mjs sync plan                         # what would be copied (changes nothing)
 node hub/cli.mjs sync run [all|data|code]          # Ctrl+C cancels safely; run again to finish
 node hub/cli.mjs code pull-from-stick [--yes]      # explicit stick -> phone code copy (clean clone only)
@@ -81,8 +82,9 @@ files are **not encrypted**: delete them when you no longer need them. See `docs
 ```sh
 node hub/cli.mjs new deep-dig --engine node-server --name "Deep Dig"   # or --engine static
 ```
-This makes `apps/deep-dig/` with app.json, a starter (the node-server one saves through `/api/save` into
-`HUB_DATA_DIR`), a placeholder icon and a README with the rules. The running hub shows the new tile at once.
+This makes `apps/deep-dig/` with app.json, a starter (the node-server one saves through `/api/save` with
+`lib/hubfs.mjs`, a copy of `hub/appkit/hubfs.mjs`: the vault with `--vault`, plain files otherwise), a placeholder
+icon and a README with the rules. The running hub shows the new tile at once.
 
 By hand: make `apps/<id>/app.json` (id: a-z, 0-9, "-"; must match the folder name):
 ```json

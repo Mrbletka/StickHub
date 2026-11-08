@@ -58,7 +58,8 @@ export async function createHub(opts = {}) {
   const dos = opts.dataOnStick ? (opts.dataOnStick === true ? {} : opts.dataOnStick) : null;
   // Data on the stick: the stick is the live storage, so the sync service only copies the code backup.
   // The vault: app data is in the vault, so the plain data sync stays away from data/ (vault sync is job 5).
-  const stick = new StickService({ root, procman, ...opts.stick, ...(dos ? { autoSync: false, dataSync: false } : {}), ...(vault ? { dataSync: false } : {}) });
+  const stick = new StickService({ root, procman, ...opts.stick, ...(dos ? { autoSync: false, dataSync: false, dataSyncOff: 'data-on-stick' } : {}),
+    ...(vault ? { dataSync: false, dataSyncOff: 'vault' } : {}) });
   const git = createGit(root);
   const live = dos ? new LiveData({
     procman, root, git, listVolumes: dos.listVolumes || opts.stick?.listVolumes || listVolumes, pollMs: dos.pollMs,

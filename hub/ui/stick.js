@@ -62,6 +62,7 @@ export function fillStickSheet($, st) {
       for (const e of st.last.errors || []) add(esc(e), 'bad');
       if (st.last.skipped) add(`${st.last.skipped} file(s) skipped (odd names, too big or changed during sync).`, 'warn');
     }
+    if (st.dataSync?.why === 'vault') add('App data is in the vault (DEV ONLY): the plain data sync leaves data/ alone and only the code is copied. Vault sync with the stick comes later.');
     if (st.pending?.length) add(`Waits until the app stops: ${esc(st.pending.join(', '))}`);
     if (st.conflicts?.length) {
       add(`Both sides changed these files. The phone's version kept the name; the stick's version is the copy below. Delete the one you do not need:<br>${st.conflicts.map((c) => `<code>data/${esc(c)}</code>`).join('<br>')}`, 'warn');

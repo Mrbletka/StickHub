@@ -1,12 +1,14 @@
 // `node hub/cli.mjs new <id> --engine node-server|static [--name "Name"]`: a new app in apps/<id>/
 // that follows the app rules. Never overwrites: an existing folder is an error.
 
-import { mkdir, writeFile, stat } from 'node:fs/promises';
+import { mkdir, writeFile, stat, copyFile, constants } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { ID_RE } from './manifest.mjs';
 
 export const SCAFFOLD_ENGINES = ['node-server', 'static'];
+/** The data client every node-server app gets as lib/hubfs.mjs (a test checks that each copy is byte-equal). */
+export const HUBFS_SOURCE = join(import.meta.dirname, 'appkit', 'hubfs.mjs');
 
 /** Escape text for HTML. */
 const esc = (t) => t.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,20 +36,20 @@ const PAGE_STYLE = `  html, body { margin: 0; height: 100%; background: #000; co
 
 function nodeServerFiles(id, name) {
   return {
-    'server.mjs': `// ${id}: StickHub app (engine node-server). Runs on its own too:  PORT=4100 node server.mjs
-// App rules: listen on process.env.PORT at 127.0.0.1, keep saves in process.env.HUB_DATA_DIR,
-// stop cleanly on SIGTERM. Node built-ins only.
+    'server.mjs': `// ${id}: StickHub app (engine node-server). Runs on its own too:  PORT=4100 node server.mjs  (data in ./data)
+// App rules: listen on process.env.PORT at 127.0.0.1, keep data only through lib/hubfs.mjs (the hub's vault, or
+// plain files in ./data when the app runs alone), stop cleanly on SIGTERM. Node built-ins only.
 
 import { createServer } from 'node:http';
-import { readFile, writeFile, rename, mkdir, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { join, extname, normalize, sep } from 'node:path';
+import * as hubfs from './lib/hubfs.mjs';
 
 const NAME = ${JSON.stringify(name)};
 const PORT = Number(process.env.PORT) || 4100;
-const DATA_DIR = process.env.HUB_DATA_DIR || join(import.meta.dirname, 'data'); // own data/ when run alone
 const PUBLIC = join(import.meta.dirname, 'public');
-const SAVE = join(DATA_DIR, 'save.json');
+const SAVE = 'save.json'; // a path inside this app's own data (hubfs), not a file on the disk
 const MAX_SAVE = 1 << 20;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp',
@@ -55,17 +57,15 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 
 /** Read the save (an empty object when there is none yet). */
 async function loadSave() {
-  try { return JSON.parse(await readFile(SAVE, 'utf8')); } catch (e) {
+  try { return JSON.parse(await hubfs.readFile(SAVE, 'utf8')); } catch (e) {
     if (e.code === 'ENOENT') return {};
     throw e;
   }
 }
 
-/** Write the save atomically: temp file, then rename. A save is never half written. */
+/** Write the save. hubfs writes are atomic: a save is never half written. */
 async function writeSave(data) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(\`\${SAVE}.tmp\`, JSON.stringify(data));
-  await rename(\`\${SAVE}.tmp\`, SAVE);
+  await hubfs.writeFile(SAVE, JSON.stringify(data));
 }
 
 function readBody(req) {
@@ -116,7 +116,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => console.log(\`\${NAME} on http://127.0.0.1:\${PORT}/ (saves in \${DATA_DIR})\`));
+server.listen(PORT, '127.0.0.1', () => console.log(\`\${NAME} on http://127.0.0.1:\${PORT}/\`));
 
 // The hub stops apps with SIGTERM (then SIGKILL after 3 s): finish open requests and exit.
 process.on('SIGTERM', () => {
@@ -143,8 +143,8 @@ ${PAGE_STYLE}
   <button id="add">+1 and save</button>
 </main>
 <script type="module">
-  // Saves go to the app's own server (PUT /api/save), which keeps them in HUB_DATA_DIR: they sync with the stick.
-  // Do not keep saves in localStorage or IndexedDB: browser storage is not synced.
+  // Saves go to the app's own server (PUT /api/save), which keeps them through hubfs (the hub's vault).
+  // Do not keep saves in localStorage or IndexedDB: browser storage is not synced and not encrypted.
   const out = document.getElementById('count');
   let save = await (await fetch('api/save')).json();
   out.textContent = save.count ?? 0;
@@ -189,13 +189,16 @@ ${PAGE_STYLE}
 function readme(id, name, engine) {
   const rules = engine === 'node-server'
     ? `- Listen on \`process.env.PORT\` at 127.0.0.1 (the hub picks the port).
-- Keep saves in \`process.env.HUB_DATA_DIR\` through this server (\`PUT /api/save\` in the starter). They sync with the stick.
-- Browser storage (localStorage, IndexedDB) is NOT synced: do not keep saves there.
-- Never import or require anything from \`HUB_DATA_DIR\`: data is data, never code (it may live on the stick).
+- Keep data only through \`lib/hubfs.mjs\` (\`readFile\`, \`writeFile\`, \`readdir\`, ... like \`node:fs/promises\`), on this
+  server (\`PUT /api/save\` in the starter). With the vault on, the hub gives the app a socket and a token; run alone,
+  hubfs uses plain files in \`./data\`. Never use \`HUB_DATA_DIR\` or \`node:fs\` for data. \`"data": "hubfs"\` in app.json
+  says so. \`lib/hubfs.mjs\` is a copy of \`hub/appkit/hubfs.mjs\`: never edit it here (a test checks).
+- Browser storage (localStorage, IndexedDB) is NOT synced and NOT encrypted: no saves there.
+- Data is data, never code: never import or run anything you read through hubfs.
 - Stop cleanly on SIGTERM (the hub kills after 3 s).
 - Node built-ins only. Run alone: \`PORT=4100 node server.mjs\`.`
     : `- Files in \`public/\` are served as they are. \`"spa": true\` in app.json sends unknown paths to index.html.
-- No server, so no saves. Browser storage (localStorage, IndexedDB) is NOT synced.`;
+- No server, so no saves (\`"data": "none"\`). Browser storage (localStorage, IndexedDB) is NOT synced.`;
   return `# ${name}
 
 StickHub app \`${id}\` (engine \`${engine}\`). Made with \`node hub/cli.mjs new\`.
@@ -221,18 +224,24 @@ export async function createApp(appsDir, o) {
   const dir = join(appsDir, o.id);
   if (await stat(dir).catch(() => null)) throw new Error(`apps/${o.id} already exists. Nothing was changed.`);
 
+  const node = o.engine === 'node-server';
   const manifest = { id: o.id, name, description: '', icon: 'icon.svg', engine: o.engine,
-    ...(o.engine === 'node-server' ? { entry: 'server.mjs', port: 'auto' } : { entry: 'public' }), version: '0.1.0' };
+    ...(node ? { entry: 'server.mjs', port: 'auto', data: 'hubfs' } : { entry: 'public', data: 'none' }), version: '0.1.0' };
   const files = {
     'app.json': `${JSON.stringify(manifest, null, 2)}\n`,
     'icon.svg': placeholderIcon(o.id, name),
     'README.md': readme(o.id, name, o.engine),
-    ...(o.engine === 'node-server' ? nodeServerFiles(o.id, name) : staticFiles(name)),
+    ...(node ? nodeServerFiles(o.id, name) : staticFiles(name)),
   };
   await mkdir(dir, { recursive: true });
   for (const [rel, text] of Object.entries(files)) {
     await mkdir(join(dir, rel, '..'), { recursive: true });
     await writeFile(join(dir, rel), text, { flag: 'wx' });
   }
-  return { dir, files: Object.keys(files) };
+  // A static app has no server, so it cannot use hubfs: only node-server apps get the client.
+  if (node) {
+    await mkdir(join(dir, 'lib'));
+    await copyFile(HUBFS_SOURCE, join(dir, 'lib', 'hubfs.mjs'), constants.COPYFILE_EXCL);
+  }
+  return { dir, files: [...Object.keys(files), ...(node ? ['lib/hubfs.mjs'] : [])] };
 }

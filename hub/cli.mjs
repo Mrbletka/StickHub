@@ -1,6 +1,7 @@
 // StickHub command line.
 //   node hub/cli.mjs stick status
 //   node hub/cli.mjs stick init [--name "My stick"] [--mount <dir>] [--force]
+//   node hub/cli.mjs sync status         is a stick plugged in, does the hub sync data (not with the vault on)
 //   node hub/cli.mjs sync plan [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
 //   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
@@ -40,6 +41,7 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const USAGE = `Usage:
   node hub/cli.mjs stick status
   node hub/cli.mjs stick init [--name "My stick"] [--mount <dir>] [--force]
+  node hub/cli.mjs sync status
   node hub/cli.mjs sync plan [all|data|code] [--mount <dir>]
   node hub/cli.mjs sync run  [all|data|code] [--mount <dir>]
   node hub/cli.mjs code pull-from-stick [--yes] [--mount <dir>]
@@ -126,8 +128,36 @@ async function stickInit(flags) {
   console.log(`Created ${join(mount, 'HUB', 'stick.json')}: "${info.name}" (${info.id}). Now run: node hub/cli.mjs sync run`);
 }
 
+const VAULT_NO_DATA_SYNC = 'Data: not synced. The hub runs with the vault on (DEV ONLY): app data is in the vault, and the '
+  + 'plain data sync never touches data/ then. Syncing the vault with the stick comes later (job 5).';
+
+/** True if the running hub has a vault open (then the plain data sync stays away from data/). */
+async function vaultHub() {
+  const r = await callHub('/api/ping', { timeout: 1500 });
+  return r?.status === 200 && r.body?.vault === true;
+}
+
+/** `sync status`: the stick and whether app data is synced. */
+async function syncStatus() {
+  await stickStatus();
+  const r = await callHub('/api/stick', { token: await readToken(stickhubHome()), timeout: 1500 });
+  if (!r) { console.log('Data: synced as plain files when you run "sync run" (the hub is not running).'); return 0; }
+  if (r.status !== 200) throw new Error(`The hub answered ${r.status}.`);
+  const ds = r.body.dataSync || { on: true };
+  if (ds.why === 'vault') console.log(VAULT_NO_DATA_SYNC);
+  else if (ds.why === 'data-on-stick') console.log('Data: lives on the stick (data on the stick), so it is not synced. Code is copied.');
+  else console.log('Data: synced as plain files (on plug-in, after an app stops, and with Sync now).');
+  if (r.body.last) console.log(`Last sync: ${r.body.last.at} ${r.body.last.result} (${r.body.last.what})`);
+  return 0;
+}
+
 async function sync(mode, what, flags) {
   if (!['all', 'data', 'code'].includes(what)) throw new UsageError(`sync ${mode}: say all, data or code`);
+  if (what !== 'code' && await vaultHub()) {
+    console.log(VAULT_NO_DATA_SYNC);
+    if (what === 'data') return 0;
+    what = 'code';
+  }
   const s = await pickStick(flags);
   const running = await runningApps();
   const run = new SyncRun({ root: ROOT, hubDir: s.hubDir, stick: s.info, fsx: createFsx(), git: createGit(ROOT), device: await deviceId(),
@@ -263,6 +293,7 @@ async function main(argv) {
   const [a, b, c] = words;
   if (a === 'stick' && b === 'status') return stickStatus().then(() => 0);
   if (a === 'stick' && b === 'init') return stickInit(flags).then(() => 0);
+  if (a === 'sync' && b === 'status') return syncStatus();
   if (a === 'sync' && (b === 'plan' || b === 'run')) return sync(b, c || 'all', flags);
   if (a === 'code' && b === 'pull-from-stick') return pull(flags);
   if (a === 'login') return login(flags);
