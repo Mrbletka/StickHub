@@ -25,7 +25,7 @@ test('after a hard kill of the hub, the next hub stops the leftover app', async 
   await writeFile(script, `
     import { createHub } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '..', 'hub', 'server.mjs')).href)};
     const hub = await createHub({ root: ${JSON.stringify(fx.root)}, port: 0, home: ${JSON.stringify(home)},
-      portRange: { from: 47170, to: 47179 }, stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 } });
+      portRange: { from: 27170, to: 27179 }, stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 } });
     const v = await hub.procman.start('good');
     console.log(JSON.stringify({ pid: hub.procman.state.get('good').handle.pid, port: v.port }));
     setInterval(() => {}, 1000);

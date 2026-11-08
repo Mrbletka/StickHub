@@ -33,7 +33,7 @@ async function fixture() {
   await initStick(mount, { name: 'Test' });
   let volumes = [];
   const lv = async () => ({ volumes: volumes.map((m) => ({ mountPoint: m })), error: null });
-  const hub = await createHub({ root: fx.root, port: 0, home: join(fx.root, 'home'), portRange: { from: 47240, to: 47249 },
+  const hub = await createHub({ root: fx.root, port: 0, home: join(fx.root, 'home'), portRange: { from: 27240, to: 27249 },
     stick: { listVolumes: lv, pollMs: 0, device: 'dev-0000000000cc' }, dataOnStick: { listVolumes: lv, pollMs: 0 } });
   const port = Number(new URL(await hub.listen()).port);
   const call = (path, method = 'GET') => http(port, path, { method, headers: { 'x-hub-token': hub.token } });

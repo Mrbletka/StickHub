@@ -4,9 +4,11 @@ import { api } from './api.mjs';
 import { Tree } from './tree.mjs';
 import { Editor } from './editor.mjs';
 import { menu, confirm, pick, fuzzy, highlight, toast, backLayer } from './dialogs.mjs';
-import { load, renamePaths } from './store.mjs';
+import { load, renamePaths, checkStart } from './store.mjs';
 import { esc } from './markdown.mjs';
 import { nameProblem } from './names.mjs';
+
+await checkStart(); // a new run of the app: forget the old UI state (it holds note names) before anything reads it
 
 const $ = (id) => document.getElementById(id);
 const app = $('app');

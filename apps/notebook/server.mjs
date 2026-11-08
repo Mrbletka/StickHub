@@ -11,7 +11,7 @@ import { realpathSync } from 'node:fs';
 import { join, extname, sep } from 'node:path';
 import { Vault, VaultError, MAX_NOTE } from './lib/vault.mjs';
 import { Changes } from './lib/changes.mjs';
-import { createHubFs } from './lib/hubfs.mjs';
+import { createHubFs, hubRoutes } from './lib/hubfs.mjs';
 
 const PORT = Number(process.env.PORT) || 4110;
 const PUBLIC = join(import.meta.dirname, 'public');
@@ -34,6 +34,7 @@ export function createHandler(vault, port, changes) {
       const p = port();
       const hosts = [`127.0.0.1:${p}`, `localhost:${p}`];
       if (!hosts.includes(req.headers.host || '')) return send(res, 421, { error: 'Wrong host.' });
+      if (hubRoutes(req, res)) return undefined; // /__hub/clear (Clear-Site-Data) and /__hub/start (design 8.5)
       const url = new URL(req.url || '/', 'http://x');
       if (url.pathname.startsWith('/api/')) {
         const site = req.headers['sec-fetch-site'];

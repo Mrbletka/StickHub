@@ -42,6 +42,7 @@ b.onclick = async () => {
 
 const server = createServer(async (req, res) => {
   try {
+    if (hubfs.hubRoutes(req, res)) return undefined; // /__hub/clear and /__hub/start for the hub (design 8.5)
     if (req.method === 'POST' && req.url === '/tap') {
       const n = (await current()) + 1;
       count = n;

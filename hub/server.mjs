@@ -75,6 +75,7 @@ export async function createHub(opts = {}) {
     live: live ? live.status() : { on: false }, vault: vaultStatus() });
   const api = createApi({ procman, stick, status, token, codes, mode, shutdown: () => opts.shutdown?.() });
   live?.on('change', () => api.broadcastStatus());
+  procman.beforeStop = (views) => api.clearApps(views); // browser storage of the apps goes before they stop
   const uiDir = join(HUB_DIR, 'ui');
 
   const server = createServer(async (req, res) => {

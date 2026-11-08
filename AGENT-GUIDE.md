@@ -242,8 +242,11 @@ v1 = passphrase + paper code end to end; v2 = device slot (fingerprint). Build o
   `node --test`): **done**. 2 scaffold copies hubfs + app-rules + no plain data sync in vault mode (`sync status`):
   **done**. 3 tap-counter on hubfs (pocket-timer is static, needs nothing): **done**. 4 Notebook on hubfs (one tree() for list
   and index, ifMatch, moves, watch() via GET /api/changes, tests in both modes, names max 120, lib/atomic.mjs gone;
-  hubfs plain mode never follows links; a stopped watch() ends its long poll at once): **done**. Still to do:
-  5 `/__hub/clear` + probe 12; docs.
+  hubfs plain mode never follows links; a stopped watch() ends its long poll at once): **done**. 5 browser state:
+  `hubRoutes()` in hubfs answers `/__hub/clear` (Clear-Site-Data) and `/__hub/start`, procman's beforeStop makes
+  the hub page load the clear URLs in hidden frames before any stop (hub/ui/clear.js), the Notebook drops its UI
+  state when the start id changed; probe 12; test ports moved to 27xxx (below the ephemeral ports): **done**.
+  Still to do: docs.
 - hub/vault/ modules: errors, bytes, kdf, keys, papercode, words, slots, header, vx (step 1); vfs, replica,
   indexfile, vxread, store-ops, packs, store-read, queue (the write queue, group commit), cleanup (capped runs),
   compact (compaction), maintain (maintenance in steps), verify, export, store (the API). The CLI is hub/cli-vault.mjs + hub/cli-prompt.mjs.

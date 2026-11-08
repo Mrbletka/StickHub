@@ -7,7 +7,7 @@ import { ProcessManager } from '../hub/procman.mjs';
 import { isPortFree } from '../hub/ports.mjs';
 import { makeApps, http, GOOD_SERVER } from './helpers.mjs';
 
-const RANGE = { from: 47100, to: 47120 };
+const RANGE = { from: 27100, to: 27120 };
 let fx, pm;
 
 before(async () => {
@@ -27,7 +27,7 @@ before(async () => {
     mismatch: { 'app.json': { id: 'other', name: 'M', engine: 'static' } },
     noengine: { 'app.json': { id: 'noengine', name: 'N', engine: 'python' } },
     atomic: { 'app.json': { id: 'atomic', name: 'Atomic', engine: 'static', atomicData: true }, 'index.html': 'a' },
-    fixed: { 'app.json': { id: 'fixed', name: 'Fixed', engine: 'static', port: 47100 }, 'index.html': 'f' },
+    fixed: { 'app.json': { id: 'fixed', name: 'Fixed', engine: 'static', port: 27100 }, 'index.html': 'f' },
   });
   const { engines } = await loadEngines();
   pm = new ProcessManager({ engines, appsDir: fx.appsDir, dataDir: fx.dataDir, portRange: RANGE, startTimeoutMs: 6000 });
@@ -126,9 +126,9 @@ test('atomicData apps do not block sync; fixed ports are kept free for their app
   const g = await pm.start('good');
   assert.deepEqual([...pm.syncBlockers()], ['good']);
   assert.equal(pm.view('atomic').atomicData, true);
-  assert.notEqual(g.port, 47100, 'the fixed port of "fixed" is not handed out');
+  assert.notEqual(g.port, 27100, 'the fixed port of "fixed" is not handed out');
   const f = await pm.start('fixed');
-  assert.equal(f.port, 47100);
+  assert.equal(f.port, 27100);
   await pm.stopAll();
   void a;
 });

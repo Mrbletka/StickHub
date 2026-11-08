@@ -43,6 +43,8 @@ export class ProcessManager extends EventEmitter {
     this.startTimeoutMs = opts.startTimeoutMs;
     this.pidFile = opts.pidFile || null;
     this.dataApi = opts.dataApi || null;
+    /** Called with the views of running apps right before they stop (the hub clears their browser storage). */
+    this.beforeStop = opts.beforeStop || null;
     /** @type {Map<string, import('./apps.mjs').App>} */
     this.apps = new Map();
     /** @type {Map<string, {status: string, port: number|null, url: string|null, error: string|null, startedAt: number|null, handle: any, log: RingLog}>} */
@@ -143,11 +145,15 @@ export class ProcessManager extends EventEmitter {
     });
   }
 
-  /** Stop an app (no-op if it is not running). graceMs: time after SIGTERM before SIGKILL (default 3 s). */
-  stop(id, graceMs) {
+  /**
+   * Stop an app (no-op if it is not running). graceMs: time after SIGTERM before SIGKILL (default 3 s).
+   * beforeStop runs first (o.cleared: stopAll already ran it for every app).
+   */
+  stop(id, graceMs, o = {}) {
     return this.#queue(id, async () => {
       const s = this.state.get(id);
       if (!s || s.status !== 'running') return this.view(id);
+      if (!o.cleared) await this.#beforeStop([this.view(id)]);
       this.#set(id, { status: 'stopping' });
       try {
         await s.handle.stop(graceMs);
@@ -170,9 +176,16 @@ export class ProcessManager extends EventEmitter {
     return this.start(id);
   }
 
-  /** Stop every app (used on hub exit). Errors are logged, never thrown. */
+  /** Stop every app (hub exit, stick pulled): one beforeStop for all, then all at once. Errors are logged, never thrown. */
   async stopAll(graceMs) {
-    await Promise.all([...this.state.keys()].map((id) => this.stop(id, graceMs).catch(() => {})));
+    const running = [...this.state.keys()].filter((id) => this.state.get(id).status === 'running');
+    if (running.length) await this.#beforeStop(running.map((id) => this.view(id)));
+    await Promise.all([...this.state.keys()].map((id) => this.stop(id, graceMs, { cleared: true }).catch(() => {})));
+  }
+
+  /** beforeStop never blocks a stop: a failure is logged. */
+  async #beforeStop(views) {
+    try { await this.beforeStop?.(views); } catch (e) { this.#log(views[0].id, 'sys', `before stop: ${e.message}`); }
   }
 
   /** Last resort on process exit: kill child processes synchronously. */

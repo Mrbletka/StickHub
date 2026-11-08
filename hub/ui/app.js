@@ -4,6 +4,7 @@
 import { chipFor, fillStickSheet, esc } from './stick.js';
 import { api, openStream, loginFromUrl, getToken, LoginNeeded } from './api.js';
 import { createPlayer } from './player.js';
+import { clearAppStorage } from './clear.js';
 
 const $ = (sel) => document.querySelector(sel);
 const grid = $('#grid');
@@ -157,6 +158,7 @@ function connect(forApp = null) {
 }
 
 function onEvent(name, data) {
+  if (name === 'clear') { clearAppStorage(data); return; } // the hub stops these apps in a moment
   if (name === 'apps') {
     apps.clear();
     for (const a of data) apps.set(a.id, a);

@@ -28,7 +28,7 @@ test('node-server starter: valid, saves through hubfs (plain files without the v
   const { engines } = await loadEngines();
   assert.deepEqual((await loadApp(dir, 'my-game', engines)).errors, []);
 
-  const pm = new ProcessManager({ engines, appsDir, dataDir, portRange: { from: 47190, to: 47199 } });
+  const pm = new ProcessManager({ engines, appsDir, dataDir, portRange: { from: 27190, to: 27199 } });
   await pm.reload();
   const v = await pm.start('my-game');
   try {
@@ -58,7 +58,7 @@ test('node-server starter with the vault on: the save lands in the vault, nothin
   const t = await makeTestStore();
   const api = await createDataApi({ socketPath: join(root, 'run', 'd.sock'), getStore: () => t.store });
   const { engines } = await loadEngines();
-  const pm = new ProcessManager({ engines, appsDir, dataDir: join(root, 'data'), portRange: { from: 47190, to: 47199 }, dataApi: api });
+  const pm = new ProcessManager({ engines, appsDir, dataDir: join(root, 'data'), portRange: { from: 27190, to: 27199 }, dataApi: api });
   await pm.reload();
   try {
     const v = await pm.start('my-game');
@@ -84,7 +84,7 @@ test('static starter: valid and served', async () => {
   assert.deepEqual(app.errors, []);
   assert.equal(app.manifest.name, 'Notes');
   assert.equal(app.manifest.data, 'none');
-  const pm = new ProcessManager({ engines, appsDir, dataDir: join(root, 'data'), portRange: { from: 47190, to: 47199 } });
+  const pm = new ProcessManager({ engines, appsDir, dataDir: join(root, 'data'), portRange: { from: 27190, to: 27199 } });
   await pm.reload();
   const v = await pm.start('notes');
   assert.match((await http(v.port, '/')).body, /<h1>Notes<\/h1>/);

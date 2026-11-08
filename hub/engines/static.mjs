@@ -4,7 +4,9 @@
 import { createServer } from 'node:http';
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { serveStatic, send } from '../static-files.mjs';
+import { hubRoutes } from '../appkit/hubfs.mjs';
 
 export default {
   id: 'static',
@@ -25,7 +27,9 @@ export default {
     const st = await stat(root).catch(() => null);
     if (!st?.isDirectory()) throw new Error(`Folder "${ctx.app.manifest.entry || '.'}" not found in the app`);
     const spa = ctx.app.manifest.spa === true;
+    const startId = randomBytes(9).toString('base64url'); // /__hub/start: new at every start of this app
     const server = createServer((req, res) => {
+      if (hubRoutes(req, res, startId)) return; // /__hub/clear and /__hub/start, as node-server apps have them
       serveStatic(req, res, root, { spa }).catch((e) => {
         ctx.log('err', `${req.url}: ${e.message}`);
         if (!res.headersSent) send(res, 500, 'Server error'); else res.destroy();

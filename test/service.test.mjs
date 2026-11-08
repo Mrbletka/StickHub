@@ -26,7 +26,7 @@ test('hub: plug-in sync, Sync now, pending while an app runs, sync after it stop
   gitc(fx.root, 'add', '-A');
   gitc(fx.root, 'commit', '-qm', 'demo app');
   let volumes = [];
-  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 47150, to: 47160 },
+  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27150, to: 27160 },
     stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000aa' }, home: join(fx.base, 'home') });
   const port = Number(new URL(await hub.listen()).port);
   const auth = { 'x-hub-token': hub.token };
@@ -74,7 +74,7 @@ test('hub with the vault on: plug-in and Sync now copy code only; the plain data
   const fx = await setup();
   const t = await makeTestStore();
   let volumes = [];
-  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 47161, to: 47165 }, vault: { store: t.store },
+  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27161, to: 27165 }, vault: { store: t.store },
     stick: { listVolumes: async () => ({ volumes, error: null }), pollMs: 0, device: 'dev-0000000000ab' }, home: join(fx.base, 'home') });
   const port = Number(new URL(await hub.listen()).port);
   const auth = { 'x-hub-token': hub.token };

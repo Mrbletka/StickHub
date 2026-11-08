@@ -101,6 +101,7 @@ async function serveFile(res, urlPath) {
 
 const server = createServer(async (req, res) => {
   try {
+    if (hubfs.hubRoutes(req, res)) return undefined; // /__hub/clear and /__hub/start for the hub (design 8.5)
     const path = new URL(req.url, 'http://x').pathname;
     if (path === '/api/save' && req.method === 'GET') return send(res, 200, await loadSave());
     if (path === '/api/save' && req.method === 'PUT') {

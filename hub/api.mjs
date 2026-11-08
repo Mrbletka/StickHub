@@ -7,6 +7,8 @@ import { ID_RE } from './manifest.mjs';
 import { tokenMatches } from './auth.mjs';
 
 const MAX_BODY = 4096;
+/** How long a stop waits after asking the open hub pages to clear the apps' browser storage (design 8.5). */
+export const CLEAR_WAIT_MS = 400;
 
 /**
  * Create the API handler.
@@ -115,6 +117,17 @@ export function createApi(hub) {
     handle,
     /** Push the hub status to every open page now. */
     broadcastStatus: () => broadcast('status', hub.status()),
+    /**
+     * Before apps stop (stop, restart, stick pulled, hub stop; job 4: lock): every open hub page loads each app's
+     * /__hub/clear in a hidden frame (Clear-Site-Data). Waits CLEAR_WAIT_MS, and only when a page is connected.
+     * @param {{id: string, url: string|null}[]} views
+     */
+    async clearApps(views) {
+      const apps = views.filter((v) => v.url).map((v) => ({ id: v.id, url: v.url }));
+      if (!apps.length || !clients.size) return;
+      broadcast('clear', apps);
+      await new Promise((r) => setTimeout(r, CLEAR_WAIT_MS));
+    },
     close() {
       for (const c of clients) c.res.end();
       clients.clear();

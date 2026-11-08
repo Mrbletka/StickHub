@@ -322,6 +322,33 @@ export function createHubFs(o = {}) {
   return { mode: 'files', ...common(filePrimitives(resolve(o.dir ?? process.env.HUB_DATA_DIR ?? './data'))) };
 }
 
+// ---- for the app's own web server: the hub's page routes (design 8.5) ----
+
+/** This app process's start id (new at every start). */
+export const START_ID = randomBytes(9).toString('base64url');
+
+/**
+ * Answer the hub's page routes; call it first in the app's request handler: `if (hubRoutes(req, res)) return;`
+ * - GET /__hub/clear: `Clear-Site-Data: "storage"`, so Chrome drops this app's localStorage, IndexedDB and the rest.
+ *   The hub page loads it in a hidden frame before the hub stops the app (and, from job 4, on lock).
+ * - GET /__hub/start: {startId}. The app page keeps its UI state next to it and drops the state when it changed
+ *   (an app that crashed never got the clear).
+ * @param {import('node:http').IncomingMessage} req
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} [startId]  default: START_ID of this process
+ * @returns {boolean} true when it answered
+ */
+export function hubRoutes(req, res, startId = START_ID) {
+  const path = (req.url || '').split('?')[0];
+  if (req.method !== 'GET' || (path !== '/__hub/clear' && path !== '/__hub/start')) return false;
+  const clear = path === '/__hub/clear';
+  const body = clear ? '<!doctype html><title>cleared</title>' : JSON.stringify({ startId });
+  res.writeHead(200, { 'content-type': clear ? 'text/html; charset=utf-8' : 'application/json', 'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body), ...(clear ? { 'clear-site-data': '"storage"' } : {}) });
+  res.end(body);
+  return true;
+}
+
 let dflt = null;
 const d = () => (dflt ??= createHubFs());
 export const readFile = (...a) => d().readFile(...a);

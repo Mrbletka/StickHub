@@ -50,7 +50,7 @@ async function setup({ vault = true } = {}) {
   await copyFile(join(ROOT, 'hub', 'appkit', 'hubfs.mjs'), join(fx.appsDir, 'keeper', 'lib', 'hubfs.mjs'));
   const t = vault ? await makeTestStore() : null;
   const home = await mkdtemp(join(tmpdir(), 'stickhub-home-'));
-  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 47250, to: 47269 }, home, startTimeoutMs: 6000,
+  const hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27250, to: 27269 }, home, startTimeoutMs: 6000,
     stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, ...(t ? { vault: { store: t.store } } : {}) });
   const port = Number(new URL(await hub.listen()).port);
   const call = (path, o = {}) => http(port, path, { ...o, headers: { 'x-hub-token': hub.token, ...o.headers } });
@@ -134,7 +134,7 @@ test('close: apps stop, then the data API goes, then the store closes after its 
 
 /** Run node hub/server.mjs with a dev vault; the passphrase goes on stdin (a pipe), as `open --vault` does. */
 async function runHub(dir, passphrase, home) {
-  const port = await findFreePort({ from: 47270, to: 47279 });
+  const port = await findFreePort({ from: 27270, to: 27279 });
   const child = spawn(process.execPath, [join(ROOT, 'hub', 'server.mjs')], { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, HUB_PORT: String(port), STICKHUB_HOME: home, HUB_DEV_VAULT: dir } });
   let output = '';
@@ -174,7 +174,7 @@ test('the real sample apps with the vault on: tap-counter counts into the vault,
   const t = await makeTestStore();
   const home = await mkdtemp(join(tmpdir(), 'stickhub-home-'));
   const data = await mkdtemp(join(tmpdir(), 'stickhub-data-'));
-  const hub = await createHub({ root: ROOT, dataDir: data, port: 0, portRange: { from: 47280, to: 47289 }, home, startTimeoutMs: 6000,
+  const hub = await createHub({ root: ROOT, dataDir: data, port: 0, portRange: { from: 27280, to: 27289 }, home, startTimeoutMs: 6000,
     stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 }, vault: { store: t.store } });
   cleanups.push(async () => { await hub.close().catch(() => {}); for (const d of [home, data, t.root]) await rm(d, { recursive: true, force: true }); });
   await hub.listen();

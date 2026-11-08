@@ -18,7 +18,7 @@ before(async () => {
       'server.mjs': GOOD_SERVER, 'icon.svg': '<svg xmlns="http://www.w3.org/2000/svg"/>' },
     broken: { 'app.json': { id: 'broken', name: 'B', engine: 'static', icon: '../../x.svg' } },
   });
-  hub = await createHub({ root: fx.root, port: 0, portRange: { from: 47130, to: 47140 }, home: await mkdtemp(join(tmpdir(), 'stickhub-home-')),
+  hub = await createHub({ root: fx.root, port: 0, portRange: { from: 27130, to: 27140 }, home: await mkdtemp(join(tmpdir(), 'stickhub-home-')),
     stick: { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 } });
   port = Number(new URL(await hub.listen()).port);
 });
