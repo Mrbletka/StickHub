@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, statSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDataApi } from '../hub/dataapi/server.mjs';
@@ -13,7 +13,11 @@ import { createHubFs } from '../hub/appkit/hubfs.mjs';
 import { makeTestStore } from './vault-helpers.mjs';
 
 const roots = [];
-after(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
+const closers = []; // servers and stores to close even when a test fails (else the test process never exits)
+after(async () => {
+  for (const c of closers.reverse()) await c().catch(() => {});
+  for (const r of roots) rmSync(r, { recursive: true, force: true });
+});
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'dapi-')); roots.push(d); return d; };
 
 /** One raw request: {status, json, buf}. */
@@ -44,8 +48,9 @@ async function setup(o = {}) {
   let store = t.store;
   const api = await createDataApi({ socketPath: join(tmp(), 'run', 'd.sock'), getStore: () => store, limits: o.limits });
   const token = api.issue('notebook');
-  return { t, api, token, sock: api.socketPath, lock: () => { store = null; }, unlock: () => { store = t.store; },
-    done: async () => { await api.close(); await t.store.close().catch(() => {}); } };
+  const done = async () => { await api.close(); await t.store.close().catch(() => {}); };
+  closers.push(done);
+  return { t, api, token, sock: api.socketPath, lock: () => { store = null; }, unlock: () => { store = t.store; }, done };
 }
 
 test('socket: run dir 0700, socket 0600, too long a path is a clear error, close removes the socket', async () => {
@@ -201,11 +206,13 @@ test('events: order, lost when too old, a long poll wakes at once', async () => 
 test('watch() reconnects after a hub restart and reports lost', async () => {
   const t = await makeTestStore({ autoCleanupEvery: 0 });
   roots.push(t.root);
-  const sock = join(tmp(), 'run', 'd.sock');
+  const run = join(tmp(), 'run');
+  const sock = join(run, 'd.sock');
   let api = await createDataApi({ socketPath: sock, getStore: () => t.store });
   let token = api.issue('notebook');
-  const fs = createHubFs({ socket: sock, token: () => token });
   const ac = new AbortController(); // a failed assert must not leave the watch retrying forever
+  closers.push(async () => { ac.abort(); await api.close(); await t.store.close(); });
+  const fs = createHubFs({ socket: sock, token: () => token });
   const it = fs.watch({ retryMs: 50, since: 0, signal: ac.signal })[Symbol.asyncIterator](); // since 0: a fresh vault, no race
   const first = it.next();
   await fs.writeFile('a.md', 'a');
@@ -213,19 +220,16 @@ test('watch() reconnects after a hub restart and reports lost', async () => {
   const next = it.next();
   await api.close();
   await new Promise((r) => setTimeout(r, 150)); // the watch retries meanwhile
-  api = await createDataApi({ socketPath: sock, getStore: () => t.store });
+  // The new hub listens on a side path until its token exists, then takes the real path: a retry can never reach it
+  // between "listening" and "token issued" (that 401 would end the watch, as it should for a real app).
+  api = await createDataApi({ socketPath: join(run, 'side.sock'), getStore: () => t.store });
   token = api.issue('notebook');
+  renameSync(join(run, 'side.sock'), sock);
   assert.equal((await next).value.kind, 'lost', 'a new hub: list again');
-  try {
-    const after = it.next();
-    await new Promise((r) => setTimeout(r, 300)); // the client asks the new hub with since = its seq (0)
-    await fs.writeFile('b.md', 'b');
-    assert.equal((await after).value.path, 'b.md');
-  } finally {
-    ac.abort();
-    await api.close();
-  }
-  await t.store.close();
+  const later = it.next();
+  await new Promise((r) => setTimeout(r, 300)); // the client asks the new hub with since = its seq (0)
+  await fs.writeFile('b.md', 'b');
+  assert.equal((await later).value.path, 'b.md');
 });
 
 test('the client file imports nothing outside node:', async () => {

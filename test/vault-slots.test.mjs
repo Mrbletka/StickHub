@@ -59,7 +59,9 @@ test('recovery slot: changing any byte of id, salt, nonce or wrapped key fails',
 });
 
 test('changing the vault id or the epoch fails', async () => {
-  for (const c of [{ ...ctx, epoch: 2 }, { ...ctx, vaultId: Buffer.from(v.vaultId).fill(0, 0, 1) }]) {
+  const otherId = Buffer.from(v.vaultId);
+  otherId[0] ^= 1; // always a different id (zeroing a byte that is 0 already changed nothing: 1 run in 256 failed)
+  for (const c of [{ ...ctx, epoch: 2 }, { ...ctx, vaultId: otherId }]) {
     await assert.rejects(openPassphraseSlot(v.ps, v.passphrase, c), { code: 'WRONG_SECRET' });
     assert.throws(() => openRecoverySlot(v.rs, v.paperCode, c), { code: 'WRONG_SECRET' });
   }
