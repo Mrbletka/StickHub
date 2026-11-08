@@ -132,7 +132,9 @@ whenever setup gets a new step.
   while it runs (no "pending").
 - Browser storage (localStorage, IndexedDB) is not synced and not encrypted, so no saves there. test/app-rules allows
   localStorage only in listed UI-state files (Notebook: public/js/store.mjs), and no IndexedDB, Cache Storage, cookies
-  or sessionStorage at all.
+  or sessionStorage at all (it looks for use in code, like `localStorage.getItem`, not for the word in a comment).
+  It checks the apps git tracks and both `hub new` starters; a local app that is not committed is not checked there
+  (the hub still shows its problems on its tile).
 - Apps open full screen in the hub player (iframe, own port). Phone first: about 423x930 CSS px, touch, no hover.
   Weak GPU, two fast cores: 2D canvas or light WebGL, aim for 60 fps.
 - Use relative URLs inside an app (`fetch('api/save')`, not `/api/save` with a host), so it also works when run alone.

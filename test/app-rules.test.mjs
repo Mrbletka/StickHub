@@ -1,4 +1,4 @@
-// App rules, checked on every app in apps/:
+// App rules, checked on every app in the repo (apps/ folders git tracks) and on new apps from `hub new`:
 // - never import or require anything from HUB_DATA_DIR (data is data, never code; it may be on the stick);
 // - with the vault on, apps keep data through hubfs ("data": "hubfs" and lib/hubfs.mjs, a byte-equal copy of
 //   hub/appkit/hubfs.mjs) or have none ("data": "none"); they never use HUB_DATA_DIR;
@@ -6,9 +6,12 @@
 //   in the listed UI-state files (cleared on lock, design 8.5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, extname } from 'node:path';
+import { readdir, readFile, writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { join, extname, basename, sep } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { dataUse } from '../hub/manifest.mjs';
+import { createApp } from '../hub/scaffold.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
 
@@ -44,20 +47,31 @@ test('the check itself catches the patterns it is meant to', () => {
 const HUBFS = join(ROOT, 'hub', 'appkit', 'hubfs.mjs');
 // Not ported to hubfs yet (they cannot start while the vault is on). Empty since job 3c: keep it that way.
 const NOT_PORTED = new Set([]);
-// The only files that may use localStorage, and what for (UI state, never data).
+// The only files that may use localStorage, and what for (UI state, never data). Paths relative to apps/.
 const UI_STATE_FILES = { 'notebook/public/js/store.mjs': 'open tabs, open folders, sort, recent notes' };
+// Use of browser storage in code (not the words in a comment such as "no saves in localStorage").
+const STORAGE_USE = /\bindexedDB\s*\.|\bIDBFactory\b|\bcaches\s*\.\s*open\b|\bdocument\s*\.\s*cookie\b|\bsessionStorage\s*[.[]/;
+const LOCAL_STORAGE_USE = /\blocalStorage\s*[.[]/;
 
-async function apps() {
+/**
+ * The apps in the repo: the folders whose app.json git tracks. A local app that is not committed (an experiment on
+ * the phone) is not checked here; the hub still shows its problems on its tile. No git (a copy without .git): every
+ * folder.
+ */
+async function repoApps() {
+  let tracked = null;
+  try {
+    tracked = new Set(execFileSync('git', ['ls-files', '-z', '--', 'apps'], { cwd: ROOT, timeout: 10_000, encoding: 'utf8' })
+      .split('\0').map((p) => /^apps\/([^/]+)\/app\.json$/.exec(p)?.[1]).filter(Boolean));
+  } catch { tracked = null; }
   const out = [];
   for (const ent of await readdir(join(ROOT, 'apps'), { withFileTypes: true })) {
-    if (!ent.isDirectory()) continue;
-    const dir = join(ROOT, 'apps', ent.name);
-    out.push({ id: ent.name, dir, manifest: JSON.parse(await readFile(join(dir, 'app.json'), 'utf8')) });
+    if (ent.isDirectory() && (!tracked || tracked.has(ent.name))) out.push(join(ROOT, 'apps', ent.name));
   }
   return out;
 }
 
-/** App files a browser or the app server runs (no tests, no lib/hubfs.mjs). */
+/** App files a browser or the app server runs (no tests, no data, no lib/hubfs.mjs). */
 async function appCode(dir) {
   const files = [];
   const walk = async (d) => {
@@ -70,33 +84,64 @@ async function appCode(dir) {
   return files;
 }
 
-test('every lib/hubfs.mjs in apps/ is a byte-equal copy of hub/appkit/hubfs.mjs', async () => {
-  const src = await readFile(HUBFS);
-  for (const a of await apps()) {
-    const copy = await readFile(join(a.dir, 'lib', 'hubfs.mjs')).catch((e) => { if (e.code === 'ENOENT') return null; throw e; });
-    if (copy) assert.ok(copy.equals(src), `apps/${a.id}/lib/hubfs.mjs differs: copy hub/appkit/hubfs.mjs again`);
+/**
+ * Every vault-mode app rule for one app folder. @returns {Promise<string[]>} problems (empty = fine)
+ */
+async function appProblems(dir) {
+  const id = basename(dir);
+  const problems = [];
+  const manifest = JSON.parse(await readFile(join(dir, 'app.json'), 'utf8'));
+  const copy = await readFile(join(dir, 'lib', 'hubfs.mjs')).catch((e) => { if (e.code === 'ENOENT') return null; throw e; });
+  if (copy && !copy.equals(await readFile(HUBFS))) problems.push(`${id}/lib/hubfs.mjs differs: copy hub/appkit/hubfs.mjs again`);
+  const use = dataUse(manifest);
+  if (NOT_PORTED.has(id)) { if (use !== 'files') problems.push(`${id} is ported: take it off NOT_PORTED`); return problems; }
+  if (use === 'files') problems.push(`${id}: say "data": "hubfs" (and use lib/hubfs.mjs) or "data": "none"`);
+  if (use === 'hubfs' && !copy) problems.push(`${id}: lib/hubfs.mjs is missing`);
+  for (const f of await appCode(dir)) {
+    const rel = `${id}/${f.slice(dir.length + 1).split(sep).join('/')}`;
+    const text = await readFile(f, 'utf8');
+    if (/HUB_DATA_DIR/.test(text)) problems.push(`${rel} uses HUB_DATA_DIR`);
+    if (STORAGE_USE.test(text)) problems.push(`${rel}: no IndexedDB, Cache Storage, cookies or sessionStorage`);
+    if (LOCAL_STORAGE_USE.test(text) && !(rel in UI_STATE_FILES)) problems.push(`${rel}: localStorage only in a listed UI-state file`);
+  }
+  return problems;
+}
+
+test('every app in the repo follows the vault rules: hubfs (byte-equal copy) or no data, no HUB_DATA_DIR, no browser storage for data', async () => {
+  const dirs = await repoApps();
+  assert.ok(dirs.length >= 3, 'the sample apps and the Notebook are checked');
+  for (const dir of dirs) assert.deepEqual(await appProblems(dir), [], basename(dir));
+});
+
+test('a new app from `hub new` (both starters) follows the same rules', async () => {
+  const appsDir = join(await mkdtemp(join(tmpdir(), 'stickhub-rules-')), 'apps');
+  try {
+    for (const engine of ['node-server', 'static']) {
+      const { dir } = await createApp(appsDir, { id: `fresh-${engine}`, engine });
+      assert.deepEqual(await appProblems(dir), [], engine);
+    }
+  } finally {
+    await rm(join(appsDir, '..'), { recursive: true, force: true });
   }
 });
 
-test('with the vault on, every app keeps its data through hubfs or has none, and never uses HUB_DATA_DIR', async () => {
-  for (const a of await apps()) {
-    const use = dataUse(a.manifest);
-    if (NOT_PORTED.has(a.id)) { assert.equal(use, 'files', `${a.id} is ported: take it off NOT_PORTED`); continue; }
-    assert.notEqual(use, 'files', `${a.id}: say "data": "hubfs" (and use lib/hubfs.mjs) or "data": "none"`);
-    if (use === 'hubfs') assert.ok(await stat(join(a.dir, 'lib', 'hubfs.mjs')).catch(() => null), `${a.id}: lib/hubfs.mjs is missing`);
-    for (const f of await appCode(a.dir)) {
-      assert.doesNotMatch(await readFile(f, 'utf8'), /HUB_DATA_DIR/, `${f.slice(ROOT.length + 1)} uses HUB_DATA_DIR`);
-    }
+test('the rules catch what they are meant to, and not words in a comment', async () => {
+  for (const bad of ['indexedDB.open("x")', 'window.indexedDB .open(n)', 'caches.open("v1")', 'document.cookie = "a=1"', "sessionStorage['k'] = 1"]) {
+    assert.ok(STORAGE_USE.test(bad), bad);
   }
-});
-
-test('no app keeps data in browser storage', async () => {
-  for (const a of await apps()) {
-    for (const f of await appCode(a.dir)) {
-      const rel = f.slice(join(ROOT, 'apps').length + 1);
-      const text = await readFile(f, 'utf8');
-      assert.doesNotMatch(text, /indexedDB|IDBFactory|caches\.open|document\.cookie|sessionStorage/, `${rel}: no IndexedDB, Cache Storage, cookies or sessionStorage`);
-      if (!(rel in UI_STATE_FILES)) assert.doesNotMatch(text, /localStorage/, `${rel}: localStorage only in a listed UI-state file`);
-    }
+  for (const bad of ['localStorage.setItem("k", v)', "window.localStorage['k']", 'localStorage .getItem(k)']) assert.ok(LOCAL_STORAGE_USE.test(bad), bad);
+  const comment = '// Do not keep saves in localStorage or IndexedDB: browser storage is not synced (no sessionStorage, no cookies).';
+  assert.ok(!STORAGE_USE.test(comment) && !LOCAL_STORAGE_USE.test(comment), 'a warning in a comment is fine');
+  // an old-style app (plain files, browser storage) is caught in full
+  const dir = join(await mkdtemp(join(tmpdir(), 'stickhub-rules-')), 'old-app');
+  try {
+    await mkdir(join(dir, 'public'), { recursive: true });
+    await writeFile(join(dir, 'app.json'), JSON.stringify({ id: 'old-app', name: 'Old', engine: 'node-server', entry: 'server.mjs' }));
+    await writeFile(join(dir, 'server.mjs'), 'const d = process.env.HUB_DATA_DIR;\n');
+    await writeFile(join(dir, 'public', 'index.html'), '<script>localStorage.setItem("save", "1")</script>');
+    assert.deepEqual(await appProblems(dir), ['old-app: say "data": "hubfs" (and use lib/hubfs.mjs) or "data": "none"',
+      'old-app/public/index.html: localStorage only in a listed UI-state file', 'old-app/server.mjs uses HUB_DATA_DIR']);
+  } finally {
+    await rm(join(dir, '..'), { recursive: true, force: true });
   }
 });
