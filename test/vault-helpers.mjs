@@ -107,3 +107,16 @@ export async function makeVaultFolder(o = {}) {
   await (await Store.create(dir, { headerText: v.text, dk: v.dk })).close();
   return { root, dir, home, passphrase: v.passphrase, paperCode: v.paperCode };
 }
+
+/** A clock the test moves: {now, setTimeout, clearTimeout, advance(ms)}; due timers fire on advance(). */
+export function fakeClock(start = 1_700_000_000_000) {
+  let now = start;
+  let id = 0;
+  const timers = new Map();
+  return {
+    now: () => now,
+    setTimeout: (fn, ms) => { timers.set(++id, { at: now + ms, fn }); return id; },
+    clearTimeout: (i) => { timers.delete(i); },
+    advance(ms) { now += ms; for (const [i, t] of [...timers]) if (t.at <= now) { timers.delete(i); t.fn(); } },
+  };
+}

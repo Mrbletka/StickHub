@@ -46,4 +46,7 @@ export class EventLog {
 
   /** Wake every waiter (close()). */
   wakeAll() { for (const a of this.#apps.values()) { for (const w of [...a.waiters]) w(); } }
+
+  /** Forget every event (they hold paths): on lock. Waiters wake; a later `since` answers lost (list again). */
+  clear() { this.wakeAll(); this.#apps.clear(); }
 }

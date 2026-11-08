@@ -23,6 +23,19 @@ import { readPassphrase, EXIT_WRONG_PASSPHRASE } from './devvault.mjs';
 import { VaultService } from './lock/service.mjs';
 
 export const HUB_PORT = 8787;
+/** Grace after SIGTERM when the vault locks: as when the stick is pulled (design 7.3). */
+export const STOP_GRACE_MS = 1200;
+
+/**
+ * The stick status without data names (locked vault): conflict lists, sync errors and the file being copied become
+ * counts or empty. The stick's own name, the code commit and app ids stay (code is plain).
+ * @param {object} st  from StickService.status()
+ */
+export function hideNames(st) {
+  return { ...st, conflicts: [], conflictsHidden: st.conflicts?.length || 0,
+    last: st.last ? { ...st.last, errors: [], errorsHidden: st.last.errors?.length || 0, newConflicts: [] } : st.last,
+    sync: st.sync?.running ? { ...st.sync, current: '' } : st.sync };
+}
 const HUB_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = dirname(HUB_DIR);
 
@@ -76,12 +89,22 @@ export async function createHub(opts = {}) {
     device: () => opts.stick?.device || deviceId(home), onAttach: () => stick.syncNow('code'),
   }) : null;
   const mode = { mode: dos ? 'data-on-stick' : 'phone', vault: !!vault };
-  const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stick.status(), mode: mode.mode,
+  // While the vault is locked, nothing the hub answers may hold a data name (design 7.3).
+  const locked = () => !!vault && !vault.unlocked;
+  const stickStatus = () => (locked() ? hideNames(stick.status()) : stick.status());
+  const status = () => ({ name: 'StickHub', commit, engines: [...engines.keys()], engineErrors, stick: stickStatus(), mode: mode.mode,
     live: live ? live.status() : { on: false }, vault: vault ? { on: true, ...vault.status() } : { on: false } });
   const api = createApi({ procman, stick, status, token, codes, mode, shutdown: () => opts.shutdown?.(),
-    vaultRoutes: vault ? vaultRoutes(vault, json) : null });
+    vaultRoutes: vault ? vaultRoutes(vault, json) : null, locked, stickStatus });
   live?.on('change', () => api.broadcastStatus());
   vault?.on('change', () => api.broadcastStatus());
+  // The lock (service.mjs): data calls already answer 423 and the commit in progress has landed; then the apps stop
+  // (their browser state is cleared first, while their servers still answer /__hub/clear), tokens and sessions go,
+  // and the app logs (app output can hold names) are forgotten.
+  vault?.attach({
+    stopApps: () => procman.stopAll(STOP_GRACE_MS),
+    revokeAll: () => { dataApi.revokeAll(); procman.clearLogs(); },
+  });
   procman.beforeStop = (views) => api.clearApps(views); // browser storage of the apps goes before they stop
   const uiDir = join(HUB_DIR, 'ui');
 

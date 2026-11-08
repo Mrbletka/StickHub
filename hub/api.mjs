@@ -14,7 +14,8 @@ export const CLEAR_WAIT_MS = 400;
  * Create the API handler.
  * @param {{procman: import('./procman.mjs').ProcessManager, stick: import('./sync/service.mjs').StickService,
  *   status: () => object, token: string, codes: import('./auth.mjs').LoginCodes, shutdown?: () => void,
- *   vaultRoutes?: (req, res, path: string) => Promise<boolean>}} hub  vaultRoutes: /api/vault* (hub/lock/routes.mjs)
+ *   vaultRoutes?: (req, res, path: string) => Promise<boolean>, locked?: () => boolean, stickStatus?: () => object}} hub
+ *   vaultRoutes: /api/vault* (hub/lock/routes.mjs); locked: no app logs then; stickStatus: the stick without names
  * @returns {{handle: (req, res, path: string) => Promise<void>, close: () => void}}
  */
 export function createApi(hub) {
@@ -26,7 +27,10 @@ export function createApi(hub) {
   // Push every app change and (for clients that asked) log lines to the open event streams.
   procman.on('change', (app) => broadcast('app', app));
   stick.on('change', () => broadcast('status', hub.status()));
+  const locked = () => !!hub.locked?.(); // the vault is locked: no app log lines leave the hub (they can hold names)
+  const stickStatus = () => (hub.stickStatus ? hub.stickStatus() : stick.status());
   procman.on('log', ({ id, entry }) => {
+    if (locked()) return;
     for (const c of clients) if (c.logsFor === id) event(c.res, 'log', { id, ...entry });
   });
 
@@ -42,7 +46,7 @@ export function createApi(hub) {
     clients.add(client);
     event(res, 'apps', procman.list());
     event(res, 'status', hub.status());
-    if (client.logsFor) for (const entry of procman.logs(client.logsFor)) event(res, 'log', { id: client.logsFor, ...entry });
+    if (client.logsFor && !locked()) for (const entry of procman.logs(client.logsFor)) event(res, 'log', { id: client.logsFor, ...entry });
     // One shared heartbeat keeps the phone from dropping idle streams; it runs only while someone listens.
     if (!heartbeat) heartbeat = setInterval(() => { for (const c of clients) c.res.write(': ping\n\n'); }, 25_000);
     req.on('close', () => {
@@ -95,14 +99,14 @@ export function createApi(hub) {
     if (req.method === 'GET' && path === '/api/apps') return json(res, 200, procman.list());
     if (req.method === 'POST' && path === '/api/apps/reload') return json(res, 200, await procman.reload());
     if (req.method === 'GET' && path === '/api/events') return openEvents(req, res, url);
-    if (req.method === 'GET' && path === '/api/stick') return json(res, 200, stick.status());
+    if (req.method === 'GET' && path === '/api/stick') return json(res, 200, stickStatus());
     if (req.method === 'POST' && path === '/api/sync') {
       const what = url.searchParams.get('what') || 'all';
       if (!['all', 'data', 'code'].includes(what)) return json(res, 400, { error: 'what: all, data or code' });
       const started = stick.syncNow(what);
-      return json(res, started ? 202 : 409, started ? stick.status() : { error: 'No stick with a HUB is connected.', stick: stick.status() });
+      return json(res, started ? 202 : 409, started ? stickStatus() : { error: 'No stick with a HUB is connected.', stick: stickStatus() });
     }
-    if (req.method === 'POST' && path === '/api/sync/cancel') { stick.cancel(); return json(res, 200, stick.status()); }
+    if (req.method === 'POST' && path === '/api/sync/cancel') { stick.cancel(); return json(res, 200, stickStatus()); }
     if (m && req.method === 'POST' && ['start', 'stop', 'restart'].includes(m[2])) {
       try {
         return json(res, 200, await procman[m[2]](m[1]));
@@ -111,6 +115,7 @@ export function createApi(hub) {
       }
     }
     if (m && req.method === 'GET' && m[2] === 'logs') {
+      if (locked()) return json(res, 423, { error: 'The vault is locked: app logs show again after unlocking.' });
       return json(res, 200, procman.logs(m[1], Number(url.searchParams.get('after')) || 0));
     }
     return json(res, m ? 405 : 404, { error: m ? 'Method not allowed' : 'Not found' });

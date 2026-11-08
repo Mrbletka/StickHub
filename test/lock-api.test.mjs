@@ -11,25 +11,12 @@ import { openVaultFolder } from '../hub/vault/store.mjs';
 import { generatePaperCode, formatPaperCode } from '../hub/vault/papercode.mjs';
 import { ARGON2ID_DEFAULT } from '../hub/vault/kdf.mjs';
 import { makeApps, http } from './helpers.mjs';
-import { makeVaultFolder } from './vault-helpers.mjs';
+import { makeVaultFolder, fakeClock } from './vault-helpers.mjs';
 
 const cleanups = [];
 after(async () => { for (const c of cleanups.reverse()) await c().catch(() => {}); });
 const NO_STICK = { listVolumes: async () => ({ volumes: [], error: null }), pollMs: 0 };
 const MARK = 'TEST-ONLY-MARKER-qz7Kp'; // a "passphrase" that must never show up anywhere
-
-/** A clock the test moves: timers fire on advance(). */
-export function fakeClock(start = 1_700_000_000_000) {
-  let now = start;
-  let id = 0;
-  const timers = new Map();
-  return {
-    now: () => now,
-    setTimeout: (fn, ms) => { timers.set(++id, { at: now + ms, fn }); return id; },
-    clearTimeout: (i) => { timers.delete(i); },
-    advance(ms) { now += ms; for (const [i, t] of [...timers]) if (t.at <= now) { timers.delete(i); t.fn(); } },
-  };
-}
 
 async function hubWith(o = {}) {
   const vf = o.vf || await makeVaultFolder();

@@ -67,7 +67,7 @@ function parseJson(buf) {
 
 /**
  * @param {{socketPath: string, getStore: () => object|null, limits?: object}} o
- * @returns {Promise<{issue: (appId: string) => string, revoke: (appId: string) => void,
+ * @returns {Promise<{issue: (appId: string) => string, revoke: (appId: string) => void, revokeAll: () => void,
  *   notify: (vaultPath: string, kind: string, id?: string) => void, close: () => Promise<void>, socketPath: string}>}
  */
 export async function createDataApi(o) {
@@ -124,6 +124,12 @@ export async function createDataApi(o) {
     socketPath: o.socketPath,
     issue: (appId) => tokens.issue(appId),
     revoke: (appId) => tokens.revoke(appId),
+    /** On lock: every token stops working, open requests and long polls end, change events (paths) are forgotten. */
+    revokeAll() {
+      tokens.clear();
+      events.clear();
+      server.closeAllConnections();
+    },
     /** A change made outside the API (sync, job 5): becomes an event of the app whose folder holds it. */
     notify(vaultPath, kind, id) {
       const i = typeof vaultPath === 'string' ? vaultPath.indexOf('/') : -1;

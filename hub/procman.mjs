@@ -93,6 +93,11 @@ export class ProcessManager extends EventEmitter {
     return this.state.get(id)?.log.since(after) || [];
   }
 
+  /** Forget every app's log lines (on lock: app output can hold names from the vault). */
+  clearLogs() {
+    for (const s of this.state.values()) s.log = new RingLog(500);
+  }
+
   /** Running apps whose data sync must wait (apps with atomicData: true do not block sync). */
   syncBlockers() {
     return new Set([...this.apps.keys()].filter((id) => this.isActive(id) && this.apps.get(id).manifest?.atomicData !== true));
